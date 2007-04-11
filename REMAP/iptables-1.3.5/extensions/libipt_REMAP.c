@@ -1,11 +1,11 @@
 /* 
- * Iptables userspace module for REMAP target
- * $Id: libipt_appl.c 22 2006-11-07 00:35:45Z degraaf $
+ * Iptables userspace module for iptables REMAP target
+ * $Id$
  *
- * Copyright Rennie deGraaf 2007 <degraaf@cpsc.ucalgary.ca>
+ * (C) 2007 Rennie deGraaf <degraaf@cpsc.ucalgary.ca>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
+ * This program is free software; you may redistribute and/or modify
+ * it under the terms of the GNU General Public Licence version 2 as
  * published by the Free Software Foundation.
  */
  
@@ -25,15 +25,23 @@ init(struct ipt_entry_target* t, unsigned int* nfcache)
 {}
 
 static int 
-parse(int c, char **argv, int invert, unsigned int *flags,
-      const struct ipt_entry *entry, unsigned int *nfcache,
-      struct ipt_entry_match **match)
+parse(int c, char** argv, int invert, unsigned int* flags,
+      const struct ipt_entry* entry, struct ipt_entry_target** target)
 {
     return 0;
 }
 
 static void 
 final_check(unsigned int flags)
+{}
+
+static void
+print(const struct ipt_ip* ip, const struct ipt_entry_target* target, 
+      int numeric)
+{}
+
+static void
+save(const struct ipt_ip* ip, const struct ipt_entry_target* target)
 {}
 
 static struct option opts[] = {
@@ -50,8 +58,8 @@ static struct iptables_target remap = {
     .init               = &init,
     .parse              = &parse,
     .final_check        = &final_check,
-    .print              = NULL,
-    .save               = NULL,
+    .print              = &print,
+    .save               = &save,
     .extra_opts	        = opts
 };
 
@@ -59,5 +67,5 @@ static struct iptables_target remap = {
 void 
 _init(void) 
 {
-    register_match(&remap);
+    register_target(&remap);
 }

@@ -1,3 +1,20 @@
+/* 
+ * iptables REMAP target.  
+ * $Id$
+ *
+ * Redirects connections matching given (protocol, src addr, dst addr, dst
+ * port) tuples to new destination addresses and ports, according to rules
+ * supplied from userspace.  Rules are written to REMAP_PROC_FILE as messages
+ * of type struct ipt_remap, apply only to the first matching connection, and
+ * are valid for at most REMAP_TIMEOUT milliseconds. 
+ *
+ * (C) 2007 Rennie deGraaf <degraaf@cpsc.ucalgary.ca>
+ *
+ * This program is free software; you may redistribute and/or modify
+ * it under the terms of the GNU General Public Licence version 2 as
+ * published by the Free Software Foundation.
+ */
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -13,9 +30,11 @@
 #include <linux/timer.h>
 #include <linux/jiffies.h>
 #include <asm/uaccess.h>
+#include <asm/string.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
+#include <linux/netfilter_ipv4/ip_nat.h>
 #include <linux/netfilter_ipv4/ip_conntrack.h>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 
@@ -33,30 +52,34 @@ MODULE_AUTHOR("Rennie deGraaf <degraaf@cpsc.ucalgary.ca>");
 MODULE_DESCRIPTION("iptables REMAP target");
 MODULE_VERSION("0.1");
 
+#define REMAP_HASH_BITS 7       /* log of the size of remap_hash_table */
+
+/* type of objects in remap_hash_table */
 struct remap_hash_entry
 {
     struct ipt_remap rule;
     unsigned long expires;
 };
 
-/* FIXME: add a timer to clean old entries from the hash table */
-
-#define REMAP_HASH_BITS 7
-#define REMAP_HASH_TIMEOUT 5000
-
+/* data structures for the remap hash table */
 static struct remap_hash_entry remap_hash_table[1<<REMAP_HASH_BITS];
 static unsigned long remap_hash_collisions = 0;
 static unsigned remap_hash_count = 0;
 static struct timer_list remap_hash_timer;
 static spinlock_t remap_hash_lock = SPIN_LOCK_UNLOCKED;
 
+/* data structures for REMAP_PROC_FILE */
 static struct proc_dir_entry* proc_remap = NULL;
 
+
+/* Garbage collector for the remap hash table 
+Iterate over all remap rules, and remove any that are older than 
+REMAP_TIMEOUT milliseconds. */
 static void
 remap_hash_gc(unsigned long data)
 {
     unsigned i;
-    unsigned long next = jiffies + msecs_to_jiffies(REMAP_HASH_TIMEOUT);
+    unsigned long next = jiffies + msecs_to_jiffies(REMAP_TIMEOUT);
     
     
     spin_lock_bh(&remap_hash_lock);
@@ -91,6 +114,9 @@ remap_hash_gc(unsigned long data)
     spin_unlock_bh(&remap_hash_lock);
 }
 
+
+/* Constructor for the remap hash table 
+Initialize all related data structures.  */
 static void 
 remap_hash_init(void)
 {
@@ -108,6 +134,10 @@ remap_hash_init(void)
            1<<REMAP_HASH_BITS, sizeof(remap_hash_table));
 }
 
+
+/* Destructor for the remap hash table 
+Cancel any pending garbage collector.  The table itself is static, so it doesn't
+need to be freed. */
 static void 
 remap_hash_fini(void)
 {
@@ -116,6 +146,10 @@ remap_hash_fini(void)
         del_timer(&remap_hash_timer);
 }
 
+
+/* Hash function for remap rules
+Hashes the original address and protocol fields; remap addresses are not 
+covered */
 static inline unsigned 
 remap_hash_fn(const struct ipt_remap* rule)
 {
@@ -125,6 +159,10 @@ remap_hash_fn(const struct ipt_remap* rule)
          ^ hash_long(rule->proto, REMAP_HASH_BITS);
 }
 
+
+/* Compares two remap rules
+If the rules' original addresses and protocols are the same, return 1.  
+Otherwise, return 0 */
 static inline int
 remap_hash_compare(const struct ipt_remap* a, const struct ipt_remap* b)
 {
@@ -136,6 +174,13 @@ remap_hash_compare(const struct ipt_remap* a, const struct ipt_remap* b)
 }
 
 
+/* Insert a remap rule into the hash table 
+If this is the first rule in the table, schedule a garbage collector to remove
+it.
+Returns:  0 on success
+          -EINVAL if the rule isn't valid
+          -ENOSPC if the hash table is full
+          -EEXIST if the rule is the same as an existing rule */
 static int 
 remap_hash_insert(const struct ipt_remap* rule)
 {
@@ -153,6 +198,7 @@ remap_hash_insert(const struct ipt_remap* rule)
     if (remap_hash_count == (1<<REMAP_HASH_BITS))
     {
         printk(KERN_WARNING "ipt_REMAP: hash table full; dropping rule\n");
+        spin_unlock_bh(&remap_hash_lock);
         return -ENOSPC;
     }
         
@@ -173,16 +219,14 @@ remap_hash_insert(const struct ipt_remap* rule)
     
     /* insert the rule */
     memcpy(&remap_hash_table[hash].rule, rule, sizeof(struct ipt_remap));
-    remap_hash_table[hash].expires = jiffies 
-                                     + msecs_to_jiffies(REMAP_HASH_TIMEOUT);
+    remap_hash_table[hash].expires = jiffies + msecs_to_jiffies(REMAP_TIMEOUT);
     remap_hash_count++;
     
     /* schedule the garbage collector */
-    /* if this is the only entry, then the gc is already scheduled */
+    /* if there is another entry, then the gc is already scheduled */
     if (remap_hash_count == 1)
     {
-        remap_hash_timer.expires = jiffies 
-                                   + msecs_to_jiffies(REMAP_HASH_TIMEOUT);
+        remap_hash_timer.expires = jiffies  + msecs_to_jiffies(REMAP_TIMEOUT);
         add_timer(&remap_hash_timer);
     }
 
@@ -191,6 +235,15 @@ remap_hash_insert(const struct ipt_remap* rule)
     return 0;
 }
 
+
+/* Retrieve a remap rule from the hash table
+If a rule matching *rule exists in the hash table, copy it into *rule, remove it
+from the table, and return 0.  Otherwise, return 1.  If this was the last rule 
+in the table, cancel any pending garbage collector.
+All fields in *rule used by remap_hash_fn() must be set before this function is 
+called.  Other fields will be overwritten on successful return.
+Since this function is only called from target(), which runs in interrupt 
+context (?), we don't need to lock the hash table here. */
 static int
 remap_hash_remove(struct ipt_remap* rule)
 {
@@ -199,7 +252,7 @@ remap_hash_remove(struct ipt_remap* rule)
     
     hash = remap_hash_fn(rule);
     
-    spin_lock_bh(&remap_hash_lock);
+    /*spin_lock_bh(&remap_hash_lock);*/
 
     /* check for underflow */
     if (remap_hash_count == 0)
@@ -225,7 +278,7 @@ remap_hash_remove(struct ipt_remap* rule)
             if ((remap_hash_count == 0) && timer_pending(&remap_hash_timer))
                 del_timer(&remap_hash_timer);
             
-            spin_unlock_bh(&remap_hash_lock);
+            /*spin_unlock_bh(&remap_hash_lock);*/
             return 0;
         }
         
@@ -234,21 +287,26 @@ remap_hash_remove(struct ipt_remap* rule)
         hash = (hash+1) & ((1<<REMAP_HASH_BITS)-1);
     }
 
-    spin_unlock_bh(&remap_hash_lock);
+    /*spin_unlock_bh(&remap_hash_lock);*/
     
     /* no match */
     return -ENOENT;
 }
 
+
+/* Print a remap rule 
+When debug mode is enabled, print a remap rule to the kernel log */
 static inline int 
 print_rule(const struct ipt_remap* rule)
 {
-    return PRINTD("%x->%x:%hu/%hu to %x:%hu\n", rule->src_addr, 
-                  rule->dst_addr, rule->dst_port, rule->proto, 
-                  rule->remap_addr, rule->remap_port);
+    return PRINTD("%x->%x:%hu/%hu to %x:%hu\n", ntohl(rule->src_addr), 
+                  ntohl(rule->dst_addr), ntohs(rule->dst_port), rule->proto, 
+                      ntohl(rule->remap_addr), ntohs(rule->remap_port));
 }
 
-    
+
+/* Handle read() calls to REMAP_PROC_FILE.
+We don't currently let users read anything through REMAP_PROC_FILE. */
 static int 
 read(char* buffer, char** buffer_location, off_t offset, int buffer_length,
      int* eof, void* data)
@@ -257,7 +315,11 @@ read(char* buffer, char** buffer_location, off_t offset, int buffer_length,
     return 0;
 }
 
-int write(struct file* file, const char* buffer, unsigned long count, 
+
+/* Handle write() calls to REMAP_PROC_FILE.
+Read a struct ipt_remap from userspace and put it in the hash table */
+static int 
+write(struct file* file, const char* buffer, unsigned long count, 
           void* data)
 {
     struct ipt_remap rule;
@@ -276,18 +338,13 @@ int write(struct file* file, const char* buffer, unsigned long count,
     
     print_rule(&rule);
     
-    /*if (!remap_hash_insert(&rule))
-        printk(KERN_WARNING "ipt_REMAP: error detecting duplicate entry\n");
-    if (remap_hash_remove(&rule))
-        printk(KERN_WARNING "ipt_REMAP: error looking up entry\n");
-    if (!remap_hash_remove(&rule))
-        printk(KERN_WARNING "ipt_REMAP: error deleting entry\n");*/
-    
     return sizeof(rule);
 }
 
 
-
+/* iptables target function 
+Check if there is an applicable remap rule for this packet, and if so, 
+remap it. */
 static unsigned int
 target(struct sk_buff** pskb,
        const struct net_device* in,
@@ -298,6 +355,12 @@ target(struct sk_buff** pskb,
 {
     struct ip_conntrack* ct;
     enum ip_conntrack_info ctinfo;
+    struct iphdr* iph;
+    struct tcphdr* tcph;
+    struct udphdr* udph;
+    struct ipt_remap rule;
+    struct ip_nat_range nat_range;
+    int ret = NF_ACCEPT;
 
     IP_NF_ASSERT(hooknum == NF_IP_PRE_ROUTING);
     
@@ -306,27 +369,85 @@ target(struct sk_buff** pskb,
     /* make sure that the connection is valid and new */
     IP_NF_ASSERT(ct && ((ctinfo == IP_CT_NEW) || (ctinfo == IP_CT_RELATED)));
     
+    iph = (*pskb)->nh.iph;
+    rule.src_addr = iph->saddr;
+    rule.dst_addr = iph->daddr;
     
-    if ((*pskb)->nh.iph->protocol == htons(IPPROTO_TCP))
+    /* only remap supported protocols */
+    if ((*pskb)->nh.iph->protocol == IPPROTO_TCP)
     {
-        PRINTD("received packet: %x->%x:%hu/%hu\n", (*pskb)->nh.iph->saddr, 
-               (*pskb)->nh.iph->daddr, (*pskb)->h.th->dest, 
-               (*pskb)->nh.iph->protocol);
+        /* check if there is a remap rule corresponding to this packet */
+        tcph = (void*)iph + (iph->ihl*4);
+        rule.dst_port = tcph->dest;
+        rule.proto = IPPROTO_TCP;
+        if (!remap_hash_remove(&rule))
+        {
+            /* build the NAT rule */
+            memset(&nat_range, 0, sizeof(nat_range));
+            if (rule.remap_port != 0)
+            {
+                nat_range.flags |= IP_NAT_RANGE_PROTO_SPECIFIED;
+                nat_range.min.tcp.port = rule.remap_port;
+                nat_range.max.tcp.port = rule.remap_port;
+            }
+            if (rule.remap_addr != 0)
+            {
+                nat_range.flags |= IP_NAT_RANGE_MAP_IPS;
+                nat_range.min_ip = rule.remap_addr;
+                nat_range.max_ip = rule.remap_addr;
+            }
+            
+            /* NAT the packet */
+            ret = ip_nat_setup_info(ct, &nat_range, hooknum);
+
+            PRINTD("remapping packet %x->%x:%hu/TCP to %x:%hu\n", 
+                   ntohl(iph->saddr), ntohl(iph->daddr), ntohs(tcph->dest), 
+                   ntohl(rule.remap_addr), ntohs(rule.remap_port));
+        }
     }
-    else if ((*pskb)->nh.iph->protocol == htons(IPPROTO_UDP))
+    else if ((*pskb)->nh.iph->protocol == IPPROTO_UDP)
     {
-        PRINTD("received packet: %x->%x:%hu/%hu\n", 
-               (*pskb)->nh.iph->saddr, 
-               (*pskb)->nh.iph->daddr, (*pskb)->h.uh->dest, 
-               (*pskb)->nh.iph->protocol);
+        /* check if there is a remap rule corresponding to this packet */
+        udph = (void*)iph + (iph->ihl*4);
+        rule.dst_port = udph->dest;
+        rule.proto = IPPROTO_UDP;
+        if (!remap_hash_remove(&rule))
+        {
+            /* build the NAT rule*/
+            memset(&nat_range, 0, sizeof(nat_range));
+            if (rule.remap_port != 0)
+            {
+                nat_range.flags |= IP_NAT_RANGE_PROTO_SPECIFIED;
+                nat_range.min.udp.port = rule.remap_port;
+                nat_range.max.udp.port = rule.remap_port;
+            }
+            if (rule.remap_addr != 0)
+            {
+                nat_range.flags |= IP_NAT_RANGE_MAP_IPS;
+                nat_range.min_ip = rule.remap_addr;
+                nat_range.max_ip = rule.remap_addr;
+            }
+            
+            /* NAT the packet */
+            ret = ip_nat_setup_info(ct, &nat_range, hooknum);
+
+            PRINTD("remapping packet %x->%x:%hu/UDP to %x:%hu\n", 
+                   ntohl(iph->saddr), ntohl(iph->daddr), ntohs(udph->dest), 
+                   ntohl(rule.remap_addr), ntohs(rule.remap_port));
+        }
     }
     else
+    {
         PRINTD("received packet: unknown protocol %hu\n", 
                (*pskb)->nh.iph->protocol);
-    
-    return NF_ACCEPT;
+    }
+        
+    return ret;
 }
 
+
+/* iptables rule validity check 
+Make sure that we're running in an appropriate table and chain. */
 static int
 check(const char* tablename,
       const void* e,
@@ -354,6 +475,9 @@ check(const char* tablename,
     return 1;
 }
 
+
+/* iptables rule destructor 
+We don't store any per-rule data, so there's nothing to do. */
 static void
 destroy(void* target_info, unsigned int target_info_size)
 {
@@ -361,7 +485,7 @@ destroy(void* target_info, unsigned int target_info_size)
 }
 
 
-
+/* iptables target handle */
 static struct ipt_target remap_target = {
     .list           = {NULL, NULL},
     .name           = "REMAP",
@@ -371,10 +495,16 @@ static struct ipt_target remap_target = {
     .me             = THIS_MODULE
 };
 
-static int __init init(void)
+
+/* Module constructor
+Create REMAP_PROC_FILE, initialize the hash table, and register the iptables
+target. */
+static int __init 
+init(void)
 {
     int ret;
     
+    /* reate REMAP_PROC_FILE */
     proc_remap = create_proc_entry(REMAP_PROC_FILE, 0200, NULL);
     if (proc_remap == NULL)
     {
@@ -387,12 +517,13 @@ static int __init init(void)
     proc_remap->write_proc = write;
     proc_remap->owner = THIS_MODULE;
     
+    /* initialize the hash table */
+    remap_hash_init();
+    
     /* register the target */
     ret = ipt_register_target(&remap_target);
     if (ret != 0)
         goto err_register_target;
-    
-    remap_hash_init();
     
     return 0;
 
@@ -402,10 +533,15 @@ err_create_proc_entry:
     return ret;
 }
 
-static void __exit fini(void)
+
+/* Module destructor
+Unregister the iptables target, free the hash table, and remove 
+REMAP_PROC_FILE. */
+static void __exit 
+fini(void)
 {
-    remap_hash_fini();
     ipt_unregister_target(&remap_target);
+    remap_hash_fini();
     remove_proc_entry(REMAP_PROC_FILE, NULL);
 }
 

@@ -1,3 +1,5 @@
+/* declarations for the iptables REMAP target */
+
 #ifndef IPT_REMAP_H
     #define IPT_REMAP_H
     
@@ -7,8 +9,11 @@
         #include <stdint.h>
     #endif
     
-    #define REMAP_PROC_FILE "net/netfilter/remap"
-    
+    #define REMAP_PROC_FILE "net/netfilter/remap" /* write rules to this file */
+    #define REMAP_TIMEOUT 10000   /* lifetime for remap rules in milliseconds */
+
+    /* Format for remap rules to be written to REMAP_PROC_FILE.
+    All fields must be in network byte order. */
     struct ipt_remap
     {
         uint32_t src_addr;

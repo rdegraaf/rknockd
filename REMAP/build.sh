@@ -4,11 +4,13 @@ KERNEL_SRC=/home/degraaf/firewall/trunk/src/rknock/REMAP/linux-2.6.16.16
 KERNEL_BUILD=/home/degraaf/build/linux-2.6.16.16
 KERNEL_FILES=".config \
               include/linux/netfilter_ipv4/ipt_REMAP.h \
+              net/netfilter/xt_conntrack.c \
               net/ipv4/netfilter/Kconfig \
               net/ipv4/netfilter/Makefile \
               net/ipv4/netfilter/ipt_REMAP.c"
 KERNEL_TARGETS="System.map \
                 include/linux/netfilter_ipv4/ipt_REMAP.h \
+                net/netfilter/xt_conntrack.ko \
                 net/ipv4/netfilter/ipt_REMAP.ko"
 KERNEL_BIN="/home/degraaf/bin/linux"
 
@@ -91,7 +93,7 @@ install_kernel()
 
 install_misc()
 {
-    targets="misc/install.sh"
+    targets="misc/install.sh misc/iptables.save"
     scp $targets degraaf@$INSTALL_HOST:remap
 }
 
@@ -116,7 +118,7 @@ case "$1" in
         retval=$?
         ;;
     *)
-        echo "Usage: $0 {iptables|kernel|all}"
+        echo "Usage: $0 {iptables|kernel|install|all}"
         retval=1
         ;;
 esac
