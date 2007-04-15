@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<rknockd  random_dev="/dev/urandom" base_port="768" challenge_bytes="12" queue_num="3452">
+<!-- this is a comment -->
+    <request port="22" secret="asdf" ttl="15">
+       0xe765bbcff0 
+       <!--this is another comment-->
+    </request>
+    <request port="23" secret="foobar" protocol="udp" ignore_client_addr="true">
+        5d0adf90077b <!--comment-->c132
+    </request>
+    <request port="23" secret="foobar" protocol="udp">
+        0x8996f310b4cfb42d
+    </request>
+    <request port="25" protocol="tcp" secret="qwertyuiop">
+        44b2f58b8e81bc9cdf5259b08064
+    </request>
+    <request port="53" secret="qwertyuiop">
+        0x25c2a6ddd3ec
+    </request>
+
+</rknockd>

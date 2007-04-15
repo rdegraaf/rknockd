@@ -72,7 +72,7 @@ operator<<(std::ostream& out, const Protocol& p)
 
 
 Request::Request()
-: proto(Protocol::TCP), port(), ignoreClientAddr(false), secret()
+: proto(Protocol::TCP), port(), ttl(DEFAULT_TTL*1000), ignoreClientAddr(false), secret()
 {}
 
 Request::~Request()
@@ -108,6 +108,7 @@ Request::printRequest(std::ostream& os) const
     os   << "    port:        " << port
        << "\n    protocol:    " << proto
        << "\n    secret:      " << secret
+       << "\n    TTL:         " << ttl/1000
        << std::endl;
 }
 
@@ -176,6 +177,22 @@ Request::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((C
                 ignoreClientAddr = false;
             else
                 throw ConfigException("Unknown value specified for element \"ignore_client_addr\"");
+        }
+        else if ((*iter)->get_name() == "ttl") // not required
+        {
+            try
+            {
+                ttl = boost::lexical_cast<boost::uint16_t>(std::string((*iter)->get_value()));
+                if (ttl < MIN_TTL)
+                    throw ConfigException("TTL too low in element \"request\"");
+                else if (ttl > MAX_TTL)
+                    throw ConfigException("TTL to high in element \"request\"");
+                ttl *= 1000; // convert to milliseconds
+            }
+            catch (boost::bad_lexical_cast& e)
+            {
+                throw ConfigException("Error parsing attribute \"ttl\" of element \"request\"");
+            }
         }
         else // unknown attribute
             throw ConfigException(std::string("Unknown attribute \"") + std::string((*iter)->get_name()) + std::string("\" of element \"rknockd\""));

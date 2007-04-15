@@ -44,7 +44,8 @@
             ~NfqSocket() THROW((NfqException));
             void connect(QueueNum num) THROW((NfqException));
             void setCopyMode(CopyMode mode, int range=65535) THROW((NfqException));
-            NfqPacket* recvPacket() THROW((NfqException));
+            NfqPacket* recvPacket(bool noblock=false) THROW((NfqException));
+            void waitForPacket() THROW((NfqException));
             void sendResponse(NfqPacket* pkt) THROW((NfqException));
             void close() THROW((NfqException));
           private:

@@ -31,8 +31,11 @@
         #define DEFAULT_BITS_PER_KNOCK      8
         #define DEFAULT_CHALLENGE_BYTES     10
         #define DEFAULT_RANDOM_DEVICE       "/dev/random"
+        #define DEFAULT_TTL                 10
         #define MIN_KEY_SIZE                4
         #define MAX_KEY_SIZE                128
+        #define MIN_TTL                     1
+        #define MAX_TTL                     60
 
         #define MIN_CHALLENGE_BYTES         5
         #define MAX_CHALLENGE_BYTES         128

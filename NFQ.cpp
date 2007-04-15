@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include "NFQ.hpp"
 
 extern "C" 
@@ -86,9 +87,8 @@ NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 }
 
 
-
 NfqPacket* 
-NfqSocket::recvPacket() THROW((NfqException))
+NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 {
     char* buf;
     struct nlmsghdr nlh;
@@ -96,14 +96,16 @@ NfqSocket::recvPacket() THROW((NfqException))
     socklen_t addrlen;
     int fd;
     int status;
+    int flags;
     
-    // NOTE: this may drop messages if more than one message is queued
-    // can that even happen?
+    // NOTE: this may drop messages if more than one message is queued.
+    // Can that even happen?
     
     // get a message header
     fd = nfq_fd(nfqHandle);
     addrlen = sizeof(peer);
-    status = recvfrom(fd, reinterpret_cast<void*>(&nlh), sizeof(nlh), MSG_PEEK, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
+    flags = MSG_PEEK | (noblock ? MSG_DONTWAIT : 0);
+    status = recvfrom(fd, reinterpret_cast<void*>(&nlh), sizeof(nlh), flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
     if (status <= 0)
     {
         throw NfqException(strerror(errno));
@@ -115,7 +117,8 @@ NfqSocket::recvPacket() THROW((NfqException))
 
     // read packet
     buf = new char[nlh.nlmsg_len];
-    status = recvfrom(fd, reinterpret_cast<void*>(buf), nlh.nlmsg_len, MSG_WAITALL, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
+    flags = noblock ? MSG_DONTWAIT : MSG_WAITALL;
+    status = recvfrom(fd, reinterpret_cast<void*>(buf), nlh.nlmsg_len, flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
     if (status <= 0)
     {
         delete[] buf;
@@ -135,6 +138,23 @@ NfqSocket::recvPacket() THROW((NfqException))
         
     delete[] buf;
     return pkt;
+}
+
+
+void
+NfqSocket::waitForPacket() THROW((NfqException))
+{
+    fd_set fds;
+    int ret;
+    
+    FD_ZERO(&fds);
+    FD_SET(nfq_fd(nfqHandle), &fds);
+    ret = select(nfq_fd(nfqHandle), &fds, NULL, NULL, NULL);
+    if (ret != 1)
+    {
+        throw NfqException(std::string("Error waiting for packet: ") + std::strerror(errno));
+    }
+    return;
 }
 
 void

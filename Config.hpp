@@ -48,6 +48,7 @@
             virtual ~Request();
             const Protocol& getProtocol() const;
             const boost::uint16_t getPort() const;
+            const boost::uint16_t getTTL() const;
             const bool getIgnoreClientAddr() const;
             const std::string getSecret() const;
             virtual void printRequest(std::ostream& os) const;
@@ -58,6 +59,7 @@
             
             Protocol& proto;
             boost::uint16_t port;
+            boost::uint16_t ttl;
             bool ignoreClientAddr;
             std::string secret;
         };

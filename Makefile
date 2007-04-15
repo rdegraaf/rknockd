@@ -11,7 +11,8 @@ spaclient_LDFLAGS=
 spaclient_LIBS=-lcrypto
 
 spaserver_OBJS=spamain.o Config.o SpaConfig.o NFQ.o Listener.o
-spaserver_CXXFLAGS=`libgcrypt-config --cflags` \
+spaserver_CXXFLAGS=-IREMAP/linux-2.6.16.16/include \
+		`libgcrypt-config --cflags` \
 		`pkg-config --cflags libxml++-2.6`
 spaserver_LDFLAGS=-L/usr/local/lib
 spaserver_LIBS=`libgcrypt-config --libs` `pkg-config --libs libxml++-2.6` \
@@ -43,5 +44,5 @@ depend:
 	${CC} -MM *.c *.cpp >.depend
 
 # dependencies
-include .depend
+-include .depend
 

@@ -6,7 +6,7 @@
  * port) tuples to new destination addresses and ports, according to rules
  * supplied from userspace.  Rules are written to REMAP_PROC_FILE as messages
  * of type struct ipt_remap, apply only to the first matching connection, and
- * are valid for at most REMAP_TIMEOUT milliseconds. 
+ * are valid for at most rule.ttl milliseconds. 
  *
  * (C) 2007 Rennie deGraaf <degraaf@cpsc.ucalgary.ca>
  *
@@ -52,6 +52,7 @@ MODULE_AUTHOR("Rennie deGraaf <degraaf@cpsc.ucalgary.ca>");
 MODULE_DESCRIPTION("iptables REMAP target");
 MODULE_VERSION("0.1");
 
+#define DEFAULT_REMAP_TIMEOUT 10000  /* default lifetime for remap rules (ms) */
 #define REMAP_HASH_BITS 7       /* log of the size of remap_hash_table */
 
 /* type of objects in remap_hash_table */
@@ -73,13 +74,12 @@ static struct proc_dir_entry* proc_remap = NULL;
 
 
 /* Garbage collector for the remap hash table 
-Iterate over all remap rules, and remove any that are older than 
-REMAP_TIMEOUT milliseconds. */
+Iterate over all remap rules, and remove any that have timed out. */
 static void
 remap_hash_gc(unsigned long data)
 {
     unsigned i;
-    unsigned long next = jiffies + msecs_to_jiffies(REMAP_TIMEOUT);
+    unsigned long next = jiffies + msecs_to_jiffies(65535); /* maximum possible ttl */
     
     
     spin_lock_bh(&remap_hash_lock);
@@ -175,8 +175,7 @@ remap_hash_compare(const struct ipt_remap* a, const struct ipt_remap* b)
 
 
 /* Insert a remap rule into the hash table 
-If this is the first rule in the table, schedule a garbage collector to remove
-it.
+If appropriate, schedule the garbage collector to remove it.
 Returns:  0 on success
           -EINVAL if the rule isn't valid
           -ENOSPC if the hash table is full
@@ -185,9 +184,11 @@ static int
 remap_hash_insert(const struct ipt_remap* rule)
 {
     unsigned hash;
+    volatile int i;
     
     /* make sure that the rule is valid */
-    if ((rule->src_addr == 0) || (rule->dst_addr == 0) || (rule->dst_port == 0))
+    if ((rule->src_addr == 0) || (rule->dst_addr == 0) || (rule->dst_port == 0)
+        || ((rule->remap_addr == 0) && (rule->remap_port == 0)))
         return -EINVAL;
     
     hash = remap_hash_fn(rule);
@@ -219,17 +220,20 @@ remap_hash_insert(const struct ipt_remap* rule)
     
     /* insert the rule */
     memcpy(&remap_hash_table[hash].rule, rule, sizeof(struct ipt_remap));
-    remap_hash_table[hash].expires = jiffies + msecs_to_jiffies(REMAP_TIMEOUT);
+    remap_hash_table[hash].expires = jiffies + msecs_to_jiffies(((rule->ttl==0) ? DEFAULT_REMAP_TIMEOUT : ntohs(rule->ttl)));
     remap_hash_count++;
     
     /* schedule the garbage collector */
-    /* if there is another entry, then the gc is already scheduled */
-    if (remap_hash_count == 1)
+    /* if the table is empty, then the gc must be scheduled */
+    if ((remap_hash_count == 1) || (time_before(remap_hash_table[hash].expires, 
+                                                remap_hash_timer.expires)))
     {
-        remap_hash_timer.expires = jiffies  + msecs_to_jiffies(REMAP_TIMEOUT);
+        if (timer_pending(&remap_hash_timer))
+            del_timer(&remap_hash_timer);
+        remap_hash_timer.expires = remap_hash_table[hash].expires;
         add_timer(&remap_hash_timer);
     }
-
+    
     spin_unlock_bh(&remap_hash_lock);
 
     return 0;
@@ -241,9 +245,7 @@ If a rule matching *rule exists in the hash table, copy it into *rule, remove it
 from the table, and return 0.  Otherwise, return 1.  If this was the last rule 
 in the table, cancel any pending garbage collector.
 All fields in *rule used by remap_hash_fn() must be set before this function is 
-called.  Other fields will be overwritten on successful return.
-Since this function is only called from target(), which runs in interrupt 
-context (?), we don't need to lock the hash table here. */
+called.  Other fields will be overwritten on successful return. */
 static int
 remap_hash_remove(struct ipt_remap* rule)
 {
@@ -252,11 +254,14 @@ remap_hash_remove(struct ipt_remap* rule)
     
     hash = remap_hash_fn(rule);
     
-    /*spin_lock_bh(&remap_hash_lock);*/
+    spin_lock_bh(&remap_hash_lock);
 
     /* check for underflow */
     if (remap_hash_count == 0)
+    {
+        spin_unlock_bh(&remap_hash_lock);
         return -ENOENT;
+    }
 
     /* search the table, using linear probing */
     /* an empty bucket or overflow means that the rule isn't in the table */
@@ -278,7 +283,7 @@ remap_hash_remove(struct ipt_remap* rule)
             if ((remap_hash_count == 0) && timer_pending(&remap_hash_timer))
                 del_timer(&remap_hash_timer);
             
-            /*spin_unlock_bh(&remap_hash_lock);*/
+            spin_unlock_bh(&remap_hash_lock);
             return 0;
         }
         
@@ -287,7 +292,7 @@ remap_hash_remove(struct ipt_remap* rule)
         hash = (hash+1) & ((1<<REMAP_HASH_BITS)-1);
     }
 
-    /*spin_unlock_bh(&remap_hash_lock);*/
+    spin_unlock_bh(&remap_hash_lock);
     
     /* no match */
     return -ENOENT;

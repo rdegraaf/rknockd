@@ -23,6 +23,7 @@
 #include "Listener.hpp"
 #include "SpaConfig.hpp"
 #include "Trie.hpp"
+#include <linux/netfilter_ipv4/ipt_REMAP.h>
 
 // typedef for <ip address, udp port> pairs
 namespace Rknockd
@@ -541,7 +542,8 @@ SpaListener::operator() ()
         {
             try
             {
-                NFQ::NfqPacket* packet = sock.recvPacket();
+                sock.waitForPacket();
+                NFQ::NfqPacket* packet = sock.recvPacket(true);
 
                 // set the verdict first, so that we don't keep the kernel waiting
                 packet->setVerdict(NFQ::NfqPacket::DROP);
