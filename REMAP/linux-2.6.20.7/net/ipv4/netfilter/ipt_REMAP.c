@@ -33,9 +33,9 @@
 #include <asm/string.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
+#include <net/netfilter/nf_nat.h>
+#include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter_ipv4/ip_tables.h>
-#include <linux/netfilter_ipv4/ip_nat.h>
-#include <linux/netfilter_ipv4/ip_conntrack.h>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 
 #define DEBUG
@@ -184,7 +184,6 @@ static int
 remap_hash_insert(const struct ipt_remap* rule)
 {
     unsigned hash;
-    volatile int i;
     
     /* make sure that the rule is valid */
     if ((rule->src_addr == 0) || (rule->dst_addr == 0) || (rule->dst_port == 0)
@@ -313,8 +312,8 @@ print_rule(const struct ipt_remap* rule)
 /* Handle read() calls to REMAP_PROC_FILE.
 We don't currently let users read anything through REMAP_PROC_FILE. */
 static int 
-read(char* buffer, char** buffer_location, off_t offset, int buffer_length,
-     int* eof, void* data)
+remap_proc_read(char* buffer, char** buffer_location, off_t offset, 
+                int buffer_length, int* eof, void* data)
 {
     *eof = 1;
     return 0;
@@ -324,8 +323,8 @@ read(char* buffer, char** buffer_location, off_t offset, int buffer_length,
 /* Handle write() calls to REMAP_PROC_FILE.
 Read a struct ipt_remap from userspace and put it in the hash table */
 static int 
-write(struct file* file, const char* buffer, unsigned long count, 
-          void* data)
+remap_proc_write(struct file* file, const char* buffer, unsigned long count, 
+                 void* data)
 {
     struct ipt_remap rule;
     int ret;
@@ -351,28 +350,28 @@ write(struct file* file, const char* buffer, unsigned long count,
 Check if there is an applicable remap rule for this packet, and if so, 
 remap it. */
 static unsigned int
-target(struct sk_buff** pskb,
-       const struct net_device* in,
-       const struct net_device* out,
-       unsigned int hooknum,
-       const void* target_info,
-       void* userinfo)
+ipt_remap_target(struct sk_buff** pskb,
+                 const struct net_device* in,
+                 const struct net_device* out,
+                 unsigned int hooknum,
+                 const struct xt_target* target,
+                 const void* target_info)
 {
-    struct ip_conntrack* ct;
+    struct nf_conn* ct;
     enum ip_conntrack_info ctinfo;
     struct iphdr* iph;
     struct tcphdr* tcph;
     struct udphdr* udph;
     struct ipt_remap rule;
-    struct ip_nat_range nat_range;
+    struct nf_nat_range nat_range;
     int ret = NF_ACCEPT;
 
-    IP_NF_ASSERT(hooknum == NF_IP_PRE_ROUTING);
+    NF_CT_ASSERT(hooknum == NF_IP_PRE_ROUTING);
     
-    ct = ip_conntrack_get(*pskb, &ctinfo);
+    ct = nf_ct_get(*pskb, &ctinfo);
     
     /* make sure that the connection is valid and new */
-    IP_NF_ASSERT(ct && ((ctinfo == IP_CT_NEW) || (ctinfo == IP_CT_RELATED)));
+    NF_CT_ASSERT(ct && ((ctinfo == IP_CT_NEW) || (ctinfo == IP_CT_RELATED)));
     
     iph = (*pskb)->nh.iph;
     rule.src_addr = iph->saddr;
@@ -403,7 +402,7 @@ target(struct sk_buff** pskb,
             }
             
             /* NAT the packet */
-            ret = ip_nat_setup_info(ct, &nat_range, hooknum);
+            ret = nf_nat_setup_info(ct, &nat_range, hooknum);
 
             PRINTD("remapping packet %x->%x:%hu/TCP to %x:%hu\n", 
                    ntohl(iph->saddr), ntohl(iph->daddr), ntohs(tcph->dest), 
@@ -434,7 +433,7 @@ target(struct sk_buff** pskb,
             }
             
             /* NAT the packet */
-            ret = ip_nat_setup_info(ct, &nat_range, hooknum);
+            ret = nf_nat_setup_info(ct, &nat_range, hooknum);
 
             PRINTD("remapping packet %x->%x:%hu/UDP to %x:%hu\n", 
                    ntohl(iph->saddr), ntohl(iph->daddr), ntohs(udph->dest), 
@@ -454,20 +453,12 @@ target(struct sk_buff** pskb,
 /* iptables rule validity check 
 Make sure that we're running in an appropriate table and chain. */
 static int
-check(const char* tablename,
-      const void* e,
-      void* target_info,
-      unsigned int target_info_size,
-      unsigned int hook_mask)
+ipt_remap_checkentry(const char* tablename,
+                     const void* e,
+                     const struct xt_target* target,
+                     void* target_info,
+                     unsigned int hook_mask)
 {
-    /* check size of target_into */
-    if (target_info_size != 0)
-    {
-        printk(KERN_WARNING "ipt_REMAP: target_into_size %u != 0\n", 
-               target_info_size);
-        return 0;
-    }
-    
     /* make sure we're running in PREROUTING chain of the nat table */
     if ((strcmp(tablename, "nat") != 0) 
         || (hook_mask & ~(1 << NF_IP_PRE_ROUTING)))
@@ -484,7 +475,7 @@ check(const char* tablename,
 /* iptables rule destructor 
 We don't store any per-rule data, so there's nothing to do. */
 static void
-destroy(void* target_info, unsigned int target_info_size)
+ipt_target_destroy(const struct xt_target* target, void* target_info)
 {
     return;
 }
@@ -494,9 +485,9 @@ destroy(void* target_info, unsigned int target_info_size)
 static struct ipt_target remap_target = {
     .list           = {NULL, NULL},
     .name           = "REMAP",
-    .target         = target,
-    .checkentry     = check,
-    .destroy        = destroy,
+    .target         = ipt_remap_target,
+    .checkentry     = ipt_remap_checkentry,
+    .destroy        = ipt_target_destroy,
     .me             = THIS_MODULE
 };
 
@@ -518,8 +509,8 @@ init(void)
         ret = -ENOMEM;
         goto err_create_proc_entry;
     }
-    proc_remap->read_proc = read;
-    proc_remap->write_proc = write;
+    proc_remap->read_proc = remap_proc_read;
+    proc_remap->write_proc = remap_proc_write;
     proc_remap->owner = THIS_MODULE;
     
     /* initialize the hash table */

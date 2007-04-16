@@ -1,27 +1,25 @@
 #!/bin/sh
 
-KERNEL_SRC=/home/degraaf/firewall/trunk/src/rknock/REMAP/linux-2.6.16.16
-KERNEL_BUILD=/home/degraaf/build/linux-2.6.16.16
+KERNEL_SRC=/home/degraaf/firewall/trunk/src/rknock/REMAP/linux-2.6.20.7
+KERNEL_BUILD=/home/degraaf/build/linux-2.6.20.7
 KERNEL_FILES=".config \
               include/linux/netfilter_ipv4/ipt_REMAP.h \
-              net/netfilter/xt_conntrack.c \
               net/ipv4/netfilter/Kconfig \
               net/ipv4/netfilter/Makefile \
               net/ipv4/netfilter/ipt_REMAP.c"
 KERNEL_TARGETS="System.map \
                 include/linux/netfilter_ipv4/ipt_REMAP.h \
-                net/netfilter/xt_conntrack.ko \
                 net/ipv4/netfilter/ipt_REMAP.ko"
 KERNEL_BIN="/home/degraaf/bin/linux"
 
-IPTABLES_SRC=/home/degraaf/firewall/trunk/src/rknock/REMAP/iptables-1.3.5
-IPTABLES_BUILD=/home/degraaf/build/iptables-1.3.5
+IPTABLES_SRC=/home/degraaf/firewall/trunk/src/rknock/REMAP/iptables-1.3.7
+IPTABLES_BUILD=/home/degraaf/build/iptables-1.3.7
 IPTABLES_FILES="extensions/libipt_REMAP.man \
                 extensions/libipt_REMAP.c \
                 extensions/Makefile"
 IPTABLES_TARGETS="extensions/libipt_REMAP.so iptables.8"
 
-INSTALL_HOST=eregion
+INSTALL_HOST=nevrast
 
 copy_iptables()
 {
@@ -56,7 +54,7 @@ build_kernel()
 
 build_iptables()
 {
-    olddir=`pwd` && cd $IPTABLES_BUILD && make PREFIX=/usr KERNEL_DIR=$KERNEL_BUILD && cd $olddir
+    olddir=`pwd` && cd $IPTABLES_BUILD && make KERNEL_DIR=$KERNEL_BUILD && cd $olddir
 }
 
 build_libnetfilter_mqueue()
