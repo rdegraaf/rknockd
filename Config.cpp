@@ -6,6 +6,7 @@
 #include <boost/lexical_cast.hpp>
 #include <fcntl.h>
 #include <unistd.h>
+#include <netinet/in.h>
 #include "Config.hpp"
 
 
@@ -16,8 +17,8 @@ ConfigException::ConfigException(const std::string& d)
 : runtime_error(d)
 {}
 
-Protocol Protocol::TCP(6, "TCP");
-Protocol Protocol::UDP(17, "UDP");
+const Protocol Protocol::TCP(IPPROTO_TCP, "TCP");
+const Protocol Protocol::UDP(IPPROTO_UDP, "UDP");
 
 Protocol::Protocol(const Protocol& p)
 : number(p.number), name(p.name)
@@ -59,6 +60,12 @@ Protocol::operator!=(const Protocol& p) const
     return !(*this == p);
 }
 
+unsigned
+Protocol::getNumber() const
+{
+    return number;
+}
+
 Protocol::Protocol(unsigned num, const std::string& n)
 : number(num), name(n)
 {}
@@ -88,6 +95,19 @@ const boost::uint16_t
 Request::getPort() const
 {
     return port;
+}
+
+const boost::uint32_t 
+Request::getAddr() const
+{
+    // FIXME: option not implemented
+    return 0;
+}
+
+const boost::uint16_t 
+Request::getTTL() const
+{
+    return ttl;
 }
 
 const bool

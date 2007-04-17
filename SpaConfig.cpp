@@ -132,7 +132,7 @@ SpaConfig::SpaConfig(std::string& filename) THROW((ConfigException))
 : Config(filename), requests()
 {
     // this can't be called by the base class constructor, since it doesn't know 
-    // what subclass it is
+    // what subclass we are
     readFile();
 }
 

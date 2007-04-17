@@ -1,3 +1,13 @@
+/* 
+Killing this program *can* result in dropped packets.  Since they're sent to 
+netlink from the kernel before this program knows about them, there's no way to 
+avoid it.  If packet loss turns out to be a problem, the chance can be reduced
+by using NFQ::waitForPacket(), acquiring a mutex, processing it and releasing
+the mutex, while handling signals in a separate thread that doesn't exit until
+it gets the mutex.
+*/
+
+
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
@@ -12,49 +22,20 @@
 #include <tr1/unordered_map>
 #include <boost/array.hpp>
 #include <boost/cstdint.hpp>
-#include <boost/thread/thread.hpp>
 #include <gcrypt.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "Config.hpp"
 #include "NFQ.hpp"
 #include "Listener.hpp"
 #include "SpaConfig.hpp"
 #include "Trie.hpp"
-#include <linux/netfilter_ipv4/ipt_REMAP.h>
-
-// typedef for <ip address, udp port> pairs
-namespace Rknockd
-{
-    /*struct SourceAddress
-    {
-        boost::uint32_t addr;
-        boost::uint16_t port;
-        SourceAddress(boost::uint32_t a, boost::uint16_t p) : addr(a), port(p){}
-    };*/
-    typedef std::pair<boost::uint32_t, boost::uint16_t> SourceAddress;
-}
-
-
-// hash function for <ip address, udp port> pairs
-namespace std
-{
-    namespace tr1
-    {
-        template<> struct hash<Rknockd::SourceAddress> 
-        {
-            std::size_t operator()(const Rknockd::SourceAddress& p) const
-            {
-                return uhash(p.first) + shash(p.second);
-            }
-            hash<boost::uint32_t> uhash;
-            hash<boost::uint16_t> shash;
-        };
-    }
-}
-
+#include "SignalTranslator.hpp"
 
 namespace Rknockd
 {
@@ -112,36 +93,67 @@ class SpaListener : public Listener
         IOException(const std::string& s) : runtime_error(s) {}
     };
 
-    class HostRecord
-    {
-        boost::uint32_t saddr;
-        boost::uint16_t sport;
-        boost::uint16_t dport;
-        const Protocol& protocol;
-        boost::array<boost::uint8_t, MAC_BYTES> response;
-      public:
-        HostRecord(boost::uint32_t sa, boost::uint16_t sp, boost::uint32_t da, boost::uint16_t dp, const SpaRequest& req, const uint8_t* challenge, size_t clen);
-        ~HostRecord();
-        boost::uint32_t getAddr() const;
-        boost::uint16_t getPort() const;
-        boost::uint16_t getDestPort() const;
-        const Protocol& getProtocol() const;
-        const boost::array<boost::uint8_t, MAC_BYTES>& getResponse() const;
-    };
-    
-    union uint32_u
-    {
-        boost::uint32_t u32;
-        boost::uint8_t u8[sizeof(boost::uint32_t)];
-    };
-
     class SpaListenerConstructor
     {
       public:
         SpaListenerConstructor();
     };
     
-    typedef std::tr1::unordered_map<SourceAddress, HostRecord> HostTable;
+    class HostRecord
+    {
+        boost::uint32_t saddr;
+        boost::uint32_t daddr;
+        boost::uint16_t sport;
+        boost::uint16_t dport;
+        boost::uint16_t targetPort;
+        const SpaRequest& request;
+        boost::array<boost::uint8_t, MAC_BYTES> response;
+      public:
+        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen);
+        ~HostRecord();
+        boost::uint32_t getSrcAddr() const;
+        boost::uint16_t getSrcPort() const;
+        boost::uint32_t getDstAddr() const;
+        boost::uint16_t getDstPort() const;
+        boost::uint16_t getTargetPort() const;
+        const SpaRequest& getRequest() const;
+        const boost::array<boost::uint8_t, MAC_BYTES>& getResponse() const;
+    };
+    
+    struct AddressPair
+    {
+        boost::uint32_t saddr;
+        boost::uint32_t daddr;
+        boost::uint16_t sport;
+        boost::uint16_t dport;
+        AddressPair(const NFQ::NfqUdpPacket* pkt);
+        AddressPair(const SpaListener::HostRecord& host);
+    };
+    
+    struct AddressPairHash
+    {
+        std::tr1::hash<boost::uint32_t> uhash;
+        std::tr1::hash<boost::uint16_t> shash;
+        std::size_t operator()(const Rknockd::SpaListener::AddressPair& a) const
+        {
+            return uhash(a.saddr) ^ uhash(a.daddr)^ shash(a.sport) ^ (shash(a.dport)<<16);
+        }
+    };
+    struct AddressPairEqual
+    {
+        bool operator() (const AddressPair& a, const AddressPair& b) const 
+        {
+            return ((a.saddr==b.saddr) && (a.daddr==b.daddr) && (a.sport==b.sport) && (a.dport==b.dport));
+        }
+    };
+
+    union uint32_u
+    {
+        boost::uint32_t u32;
+        boost::uint8_t u8[sizeof(boost::uint32_t)];
+    };
+
+    typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
     typedef Libwheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
 
     const SpaConfig& config;
@@ -150,7 +162,7 @@ class SpaListener : public Listener
 
     static SpaListenerConstructor _classconstructor;
     
-    HostRecord& getRecord(boost::uint32_t saddr, boost::uint16_t sport) THROW((UnknownHostException));
+    HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
     bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
     void openPort(const HostRecord& host);
     void deleteState(const HostRecord& host);
@@ -169,6 +181,7 @@ class SpaListener : public Listener
     void operator()();
 };
 
+
 // static data members
 SpaListener::SpaListenerConstructor SpaListener::_classconstructor;
 
@@ -185,10 +198,10 @@ SpaListener::SpaListenerConstructor::SpaListenerConstructor()
 }
 
 
-SpaListener::HostRecord::HostRecord(boost::uint32_t sa, boost::uint16_t sp, boost::uint32_t da, boost::uint16_t dp, const SpaRequest& req, const uint8_t* challenge, size_t clen)
-: saddr(sa), sport(sp), dport(dp), protocol(req.getProtocol()), response()
+SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen)
+: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target), request(req), response()
 {
-    SpaListener::computeMAC(response, req.getSecret(), challenge, clen, sa, da, req.getRequestString(), req.getIgnoreClientAddr());
+    SpaListener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
 }
 
 
@@ -197,29 +210,41 @@ SpaListener::HostRecord::~HostRecord()
 
 
 boost::uint32_t 
-SpaListener::HostRecord::getAddr() const
+SpaListener::HostRecord::getSrcAddr() const
 {
     return saddr;
 }
 
 
 boost::uint16_t 
-SpaListener::HostRecord::getPort() const
+SpaListener::HostRecord::getSrcPort() const
 {
     return sport;
 }
 
+boost::uint32_t
+SpaListener::HostRecord::getDstAddr() const
+{
+    return daddr;
+}
 
 boost::uint16_t 
-SpaListener::HostRecord::getDestPort() const
+SpaListener::HostRecord::getDstPort() const
 {
     return dport;
 }
 
-const Protocol&
-SpaListener::HostRecord::getProtocol() const
+
+boost::uint16_t 
+SpaListener::HostRecord::getTargetPort() const
 {
-    return protocol;
+    return targetPort;
+}
+
+const SpaRequest&
+SpaListener::HostRecord::getRequest() const
+{
+    return request;
 }
 
 const boost::array<boost::uint8_t, MAC_BYTES>&
@@ -229,16 +254,38 @@ SpaListener::HostRecord::getResponse() const
 }
 
 
+/* Creates an AddressPair from a NfqUdpPacket 
+*/
+SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
+: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
+{}
+
+
+/* Creates an AddressPair from a HostRecord
+*/
+SpaListener::AddressPair::AddressPair(const SpaListener::HostRecord& host)
+: saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
+{}
+
+
+/* Looks up a host in the host hash table 
+If an entry exists in the hash table matching *pkt, return it.  Otherwise, 
+throw an UnknownHostException.
+*/
 SpaListener::HostRecord& 
-SpaListener::getRecord(boost::uint32_t saddr, boost::uint16_t sport) THROW((UnknownHostException))
+SpaListener::getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException))
 {
-    HostTable::iterator iter = hostTable.find(SourceAddress(saddr, sport));
+    HostTable::iterator iter = hostTable.find(AddressPair(pkt));
     if (iter == hostTable.end())
         throw UnknownHostException("Host not found");
     return iter->second;
 }
 
 
+/* Checks if a response is valid
+If the response in *pkt is the one expected for host, return true.  Otherwise,
+return false.
+*/
 bool 
 SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 {
@@ -257,24 +304,73 @@ SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 }
 
 
+/* Opwn a port to a source host after successful authentication
+Sends a message to ipt_REMAP asking it to redirect the next connection to 
+the random target port to the requested destination port
+*/
 void 
 SpaListener::openPort(const HostRecord& host)
 {
-    // FIXME: stub
-    std::cout << "Opening port " << host.getDestPort() << '/' << host.getProtocol() << " to " << ipv4_to_string(host.getAddr()) << std::endl;
+    struct ipt_remap remap;
+    int fd;
+    int ret;
+    const SpaRequest& req = host.getRequest();
+
+#ifdef DEBUG
+    std::cout << "Forwarding " << ipv4_to_string(host.getSrcAddr()) << ':' 
+              << host.getTargetPort() << '/' << req.getProtocol() << " to " 
+              << ipv4_to_string(host.getDstAddr()) << ':' << req.getPort()
+              << std::endl;
+#endif
+    
+    // build a remap rule
+    memset(&remap, 0, sizeof(remap));
+    remap.src_addr = htonl(host.getSrcAddr());
+    if (req.getAddr() != 0)
+        remap.dst_addr = htonl(req.getAddr());
+    else
+        remap.dst_addr = htonl(host.getDstAddr());
+    remap.remap_addr = htonl(0);
+    remap.dst_port = htons(host.getTargetPort());
+    remap.remap_port = htons(req.getPort());
+    remap.proto = req.getProtocol().getNumber();
+    remap.ttl = htons(req.getTTL());
+
+    // write the remap rule to the kernel driver
+    fd = open("/proc/"REMAP_PROC_FILE, O_WRONLY);
+    if (fd == -1)
+    {
+        std::cerr << "Error opening /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
+        return;
+    }
+    ret = write(fd, &remap, sizeof(remap));
+    if (ret == -1)
+        std::cerr << "Error writing to /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
+    else if (ret != sizeof(remap))
+        std::cerr << "Error writing to /proc/"REMAP_PROC_FILE": message truncated" << std::endl;
+    ret = close(fd);
+    if (ret == -1)
+        std::cerr << "Error closing /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
 }
 
 
+/* Remove an entry from the host hash table
+*/
 void 
 SpaListener::deleteState(const HostRecord& host)
 {
-    hostTable.erase(SourceAddress(host.getAddr(), host.getPort()));
+    hostTable.erase(AddressPair(host));
 }
 
 
+/* Checks if a packet contains a valid request string
+If *pkt contains a valid request message, return a reference to the 
+corresponding SpaRequest object.  Otherwise, throw a BadRequestException.
+*/
 const SpaRequest& 
 SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException))
 {
+    assert(pkt != NULL);
     size_t payload_size;
     const SpaRequestHeader* hdr = reinterpret_cast<const SpaRequestHeader*>(pkt->getUdpPayload(payload_size));
     const boost::uint8_t* contents = pkt->getUdpPayload(payload_size) + sizeof(SpaRequestHeader);
@@ -298,12 +394,19 @@ SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestExcepti
     else
     {
 #ifdef DEBUG
-    std::cerr << "Good request received from " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
+    std::cout << "Good request received from " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
 #endif
         return *request;
     }
 }
-    
+
+
+/* Sends a challenge message to a client
+Generate a random challenge and target port, build a challenge message, send it
+to the source of *pkt, and add an entry for the client to the hosts hash table.
+Throws: SocketException - error sending challenge message
+        IOException - error reading random data
+*/
 void 
 SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException))
 {
@@ -359,16 +462,19 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
         throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
 
     // create a record for this host
-    HostRecord hrec(pkt->getIpSource(), pkt->getUdpSource(), pkt->getIpDest(), dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
-    hostTable.insert(std::pair<SourceAddress, HostRecord>(SourceAddress(pkt->getIpSource(), pkt->getUdpSource()), hrec));
+    HostRecord hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
+    hostTable.insert(std::pair<AddressPair, HostRecord>(AddressPair(hrec), hrec));
 
     delete[] challenge;
     delete[] rand_bytes;
 #ifdef DEBUG
-    std::cerr << "Sent challenge, dport=" << dport << " to " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
+    std::cout << "Sent challenge, dport=" << dport << " to " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
 #endif
 }
 
+
+/* Handle a packet received from Netlink
+*/
 void 
 SpaListener::handlePacket(const NFQ::NfqPacket* p)
 {
@@ -379,7 +485,7 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
 
     try
     {
-        HostRecord& host = getRecord(packet->getIpSource(), packet->getUdpSource());
+        HostRecord& host = getRecord(packet);
 
         // we have already issued a challenge to this host;
         // check if this is a valid response
@@ -389,9 +495,9 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
         }
         else
         {
-            std::cout << "Incorrect response received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << std::endl;
-            deleteState(host);
+            std::cerr << "Incorrect response received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << std::endl;
         }
+        deleteState(host);
     }
     catch (UnknownHostException& e)
     {
@@ -405,12 +511,14 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
         }
         catch (BadRequestException& e)
         {
-            std::cout << "Incorrect request received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << ": " << e.what() << std::endl;
+            std::cerr << "Incorrect request received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << ": " << e.what() << std::endl;
         }
     }
 }
 
 
+/* Compute the SHA1 hash of a string
+*/
 void 
 SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str)
 {
@@ -418,18 +526,24 @@ SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str)
 }
 
 
+/* Compute the SHA1 hash of a buffer
+*/
 void 
 SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, size_t strlen)
 {
     gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str, strlen);    
 }
 
+// FIXME:  use boost::array where possible
 
+/* Build an struct PortMessage and encrypt it with AES-128-ECB
+Throws: CryptoException - if there is an error in the crypto library
+*/
 void 
 SpaListener::encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t port, const boost::uint8_t pad[PORT_MESSAGE_PAD_BYTES], const std::string& keystr) THROW((CryptoException))
 {
     boost::uint8_t hash[HASH_BYTES];
-    PortMessage mess;
+    struct PortMessage mess;
     gcry_error_t err;
     gcry_cipher_hd_t handle;
 
@@ -465,6 +579,9 @@ SpaListener::encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t
 }    
 
 
+/* Compute a MAC on a challenge
+Throws: CryptoException - if there is an error in the crypto library
+*/
 void 
 SpaListener::computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr)
 {
@@ -511,6 +628,9 @@ SpaListener::computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std:
 }
 
 
+/* Constructor for SpaListener
+Initialize, program the request matcher trie with all request strings
+*/
 SpaListener::SpaListener(const SpaConfig& c)
 : config(c), hostTable(), requestTable()
 {
@@ -524,10 +644,15 @@ SpaListener::SpaListener(const SpaConfig& c)
 }
 
 
+/* Destructor for SpaListener
+*/
 SpaListener::~SpaListener()
 {}
 
 
+/* Entry point for SpaListener
+Designed this way for compatibility with boost::thread
+*/
 void 
 SpaListener::operator() ()
 {
@@ -536,48 +661,54 @@ SpaListener::operator() ()
         NFQ::NfqSocket sock(config.getNfQueueNum());
         sock.setCopyMode(NFQ::NfqSocket::PACKET);
 
-        // loop forever, processing packets
-        // FIXME: need to come up with some sort of exit strategy
-        while (1)
+        try
         {
-            try
+            // loop forever, processing packets
+            // send the process a SIGINT to stop 
+            while (1)
             {
-                sock.waitForPacket();
-                NFQ::NfqPacket* packet = sock.recvPacket(true);
+                try
+                {
+                    sock.waitForPacket();
+                    NFQ::NfqPacket* packet = sock.recvPacket(true);
 
-                // set the verdict first, so that we don't keep the kernel waiting
-                packet->setVerdict(NFQ::NfqPacket::DROP);
-                //packet->setNfMark(1);
-                sock.sendResponse(packet);
+                    // set the verdict first, so that we don't keep the kernel waiting
+                    packet->setVerdict(NFQ::NfqPacket::DROP);
+                    sock.sendResponse(packet);
+#ifdef DEBUG
+                    printPacketInfo(packet, std::cout);
+#endif
+                    // handle the packet
+                    handlePacket(packet);
 
-                printPacketInfo(packet, std::cout);
-
-                // handle the packet
-                handlePacket(packet);
-
-                delete packet;
-            }
-            catch (NFQ::NfqException& e)
-            {
-                std::cout << "Error processing packet: " << e.what() << std::endl;
+                    delete packet;
+                }
+                catch (NFQ::NfqException& e)
+                {
+                    std::cerr << "Error processing packet: " << e.what() << std::endl;
+                }
             }
         }
-
+        catch (LibWheel::Interrupt& e) // thrown by SIGINT handler
+        {
+            std::cerr << "SIGINT caught; exiting normally" << std::endl;
+        }
         try
         {
             sock.close();
         }
         catch (NFQ::NfqException& e)
         {
-            std::cout << "Error disconnecting from NFQUEUE: " << e.what() << std::endl;
+            std::cerr << "Error disconnecting from NFQUEUE: " << e.what() << std::endl;
         }
     }
     catch (NFQ::NfqException& e)
     {
-        std::cout << "Error connecting to NFQUEUE: " << e.what() << std::endl;
+        std::cerr << "Error connecting to NFQUEUE: " << e.what() << std::endl;
     }
 }
 
+LibWheel::SignalTranslator<LibWheel::Interrupt> sigintTranslator;
 
 } // namespace Rknockd
 
@@ -597,20 +728,9 @@ main(const int argc, const char** argv)
         config.printConfig(std::cout);
 #endif
         
-        try
-        {
-            // start up threads
-            Rknockd::SpaListener k(config);
-            boost::thread listener(k);
-
-            // clean up
-            listener.join();
-        }
-        catch (const boost::thread_resource_error& e)
-        {
-            std::cerr << "Error starting threads: " << e.what() << std::endl;
-            std::exit(EXIT_FAILURE);
-        }
+        // run the listener
+        Rknockd::SpaListener listener(config);
+        listener();
     }
     catch (const Rknockd::ConfigException& e)
     {

@@ -21,8 +21,8 @@
         class Protocol
         {
           public:
-            static Protocol TCP;
-            static Protocol UDP;
+            static const Protocol TCP;
+            static const Protocol UDP;
             
             Protocol(const Protocol& p);
             Protocol& operator=(const Protocol& p);
@@ -30,6 +30,7 @@
             bool operator==(const Protocol& p) const;
             bool operator!=(unsigned num) const;
             bool operator!=(const Protocol& p) const;
+            unsigned getNumber() const;
             friend std::ostream& operator<<(std::ostream&, const Protocol&);  
           private:
             Protocol(unsigned num, const std::string& n);
@@ -48,6 +49,7 @@
             virtual ~Request();
             const Protocol& getProtocol() const;
             const boost::uint16_t getPort() const;
+            const boost::uint32_t getAddr() const;
             const boost::uint16_t getTTL() const;
             const bool getIgnoreClientAddr() const;
             const std::string getSecret() const;
@@ -57,7 +59,7 @@
             void parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((ConfigException));
             virtual void getRequestString(const std::string& str, const Config* config) THROW((ConfigException)) = 0;
             
-            Protocol& proto;
+            Protocol proto;
             boost::uint16_t port;
             boost::uint16_t ttl;
             bool ignoreClientAddr;

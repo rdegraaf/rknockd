@@ -28,20 +28,20 @@ NfqSocket::NfqSocket()
 : isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
 {}
 
-NfqSocket::NfqSocket(QueueNum num) THROW((NfqException))
+NfqSocket::NfqSocket(QueueNum num) THROW((LibWheel::SignalException, NfqException))
 : isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
 {
     connect(num);
 }
 
-NfqSocket::~NfqSocket() THROW((NfqException))
+NfqSocket::~NfqSocket() THROW((LibWheel::SignalException, NfqException))
 {
     close();
 }
 
 // not thread-safe
 void
-NfqSocket::connect(QueueNum num) THROW((NfqException))
+NfqSocket::connect(QueueNum num) THROW((LibWheel::SignalException, NfqException))
 {
     if (isConnected)
         throw NfqException("Socket already connected");
@@ -73,7 +73,7 @@ NfqSocket::connect(QueueNum num) THROW((NfqException))
 }
 
 void 
-NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
+NfqSocket::setCopyMode(CopyMode mode, int range) THROW((LibWheel::SignalException, NfqException))
 {
     static boost::uint8_t mode_table[] = 
     {
@@ -88,7 +88,7 @@ NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 
 
 NfqPacket* 
-NfqSocket::recvPacket(bool noblock) THROW((NfqException))
+NfqSocket::recvPacket(bool noblock) THROW((LibWheel::SignalException, NfqException))
 {
     char* buf;
     struct nlmsghdr nlh;
@@ -142,14 +142,14 @@ NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 
 
 void
-NfqSocket::waitForPacket() THROW((NfqException))
+NfqSocket::waitForPacket() THROW((LibWheel::SignalException, NfqException))
 {
     fd_set fds;
     int ret;
     
     FD_ZERO(&fds);
     FD_SET(nfq_fd(nfqHandle), &fds);
-    ret = select(nfq_fd(nfqHandle), &fds, NULL, NULL, NULL);
+    ret = select(nfq_fd(nfqHandle)+1, &fds, NULL, NULL, NULL);
     if (ret != 1)
     {
         throw NfqException(std::string("Error waiting for packet: ") + std::strerror(errno));
@@ -158,7 +158,7 @@ NfqSocket::waitForPacket() THROW((NfqException))
 }
 
 void
-NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
+NfqSocket::sendResponse(NfqPacket* pkt) THROW((LibWheel::SignalException, NfqException))
 {
     int status;
     
@@ -182,7 +182,7 @@ NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
 
 // not thread-safe
 void
-NfqSocket::close() THROW((NfqException))
+NfqSocket::close() THROW((LibWheel::SignalException, NfqException))
 {
     if (isConnected)
     {

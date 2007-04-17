@@ -10,13 +10,14 @@ spaclient_CCFLAGS=
 spaclient_LDFLAGS=
 spaclient_LIBS=-lcrypto
 
-spaserver_OBJS=spamain.o Config.o SpaConfig.o NFQ.o Listener.o
-spaserver_CXXFLAGS=-IREMAP/linux-2.6.16.16/include \
+spaserver_OBJS=spamain.o Config.o SpaConfig.o NFQ.o Listener.o \
+	       SignalTranslator.o
+spaserver_CXXFLAGS=-IREMAP/linux-2.6.20.7/include \
 		`libgcrypt-config --cflags` \
 		`pkg-config --cflags libxml++-2.6`
 spaserver_LDFLAGS=-L/usr/local/lib
 spaserver_LIBS=`libgcrypt-config --libs` `pkg-config --libs libxml++-2.6` \
-		-lboost_thread -lnetfilter_queue
+		-lnetfilter_queue
 
 .PHONY: all clean distclean depend
 

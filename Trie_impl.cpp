@@ -1,117 +1,114 @@
-#ifndef LIBWHEEL_TRIE_IMPL_CPP
-    #define LIBWHEEL_TRIE_IMPL_CPP
-    
-    #include "Trie.hpp"
+#include "Trie.hpp"
 
 namespace Libwheel
 {
 
-UninitializedException::UninitializedException(const std::string& s)
-: runtime_error(s)
-{}
+    UninitializedException::UninitializedException(const std::string& s)
+    : runtime_error(s)
+    {}
 
-template <typename CharType, typename MatchType>
-Trie<CharType, MatchType>::Node::Node()
-: match(NULL), transitions()
-{}
+    template <typename CharType, typename MatchType>
+    Trie<CharType, MatchType>::Node::Node()
+    : match(NULL), transitions()
+    {}
 
-template <typename CharType, typename MatchType>
-Trie<CharType, MatchType>::Trie()
-: tree()
-{
-    Node node;
-    tree.push_back(node);
-}
-
-template <typename CharType, typename MatchType>
-Trie<CharType, MatchType>::~Trie()
-{}
-
-template <typename CharType, typename MatchType>
-void
-Trie<CharType, MatchType>::addString(const StringType& str, const MatchType& match)
-{
-    Node* cur;
-    Node* next = &(*tree.begin());
-    typename Node::TransitionsType::iterator transition;
-    
-    for (typename StringType::const_iterator i=str.begin(); i!=str.end(); ++i)
+    template <typename CharType, typename MatchType>
+    Trie<CharType, MatchType>::Trie()
+    : tree()
     {
-        cur = next;
-        
-        transition = cur->transitions.find(*i);
-        if (transition == cur->transitions.end())
+        Node node;
+        tree.push_back(node);
+    }
+
+    template <typename CharType, typename MatchType>
+    Trie<CharType, MatchType>::~Trie()
+    {}
+
+    template <typename CharType, typename MatchType>
+    void
+    Trie<CharType, MatchType>::addString(const StringType& str, const MatchType& match)
+    {
+        Node* cur;
+        Node* next = &(*tree.begin());
+        typename Node::TransitionsType::iterator transition;
+
+        for (typename StringType::const_iterator i=str.begin(); i!=str.end(); ++i)
         {
-            // we don't have this character; add it
-            Node node;
-            tree.push_back(node);
-            next = &(*(--tree.end()));
-            cur->transitions.insert(std::pair<CharType, Node*>(*i, next));
+            cur = next;
+
+            transition = cur->transitions.find(*i);
+            if (transition == cur->transitions.end())
+            {
+                // we don't have this character; add it
+                Node node;
+                tree.push_back(node);
+                next = &(*(--tree.end()));
+                cur->transitions.insert(std::pair<CharType, Node*>(*i, next));
+            }
+            else
+            {
+                // we already have this character; move on to the next
+                next = transition->second;
+            }
         }
-        else
+
+        // we're now at the end node for this string
+        // fail silently if there's already a match here
+        if (next->match == NULL)
+            next->match = &match;
+    }
+
+    /*template <typename CharType, typename MatchType>
+    const typename Trie<CharType, MatchType>::Node* 
+    Trie<CharType, MatchType>::getInitialState() const
+    {
+        return &(*tree.begin());
+    }*/
+
+
+    template <typename CharType, typename MatchType>
+    const MatchType*
+    Trie<CharType, MatchType>::search(const StringType& str) const
+    {
+        const Node* cur = &(*tree.begin());
+        typename Node::TransitionsType::const_iterator transition;
+
+        // follow the tree
+        for (typename StringType::const_iterator i=str.begin(); i!=str.end(); ++i)
         {
-            // we already have this character; move on to the next
-            next = transition->second;
+            transition = cur->transitions.find(*i);
+            if (transition == cur->transitions.end())
+                return NULL;
+            else
+                cur = transition->second;
         }
+
+        // return the match, if there is one
+        return cur->match;
     }
 
-    // we're now at the end node for this string
-    // fail silently if there's already a match here
-    if (next->match == NULL)
-        next->match = &match;
-}
-
-/*template <typename CharType, typename MatchType>
-const typename Trie<CharType, MatchType>::Node* 
-Trie<CharType, MatchType>::getInitialState() const
-{
-    return &(*tree.begin());
-}*/
-
-
-template <typename CharType, typename MatchType>
-const MatchType*
-Trie<CharType, MatchType>::search(const StringType& str) const
-{
-    const Node* cur = &(*tree.begin());
-    typename Node::TransitionsType::const_iterator transition;
-    
-    // follow the tree
-    for (typename StringType::const_iterator i=str.begin(); i!=str.end(); ++i)
+    template <typename CharType, typename MatchType>
+    const MatchType* 
+    Trie<CharType, MatchType>::search(const CharType* str, size_t strlen) const
     {
-        transition = cur->transitions.find(*i);
-        if (transition == cur->transitions.end())
-            return NULL;
-        else
-            cur = transition->second;
-    }
-    
-    // return the match, if there is one
-    return cur->match;
-}
+        const Node* cur = &(*tree.begin());
+        typename Node::TransitionsType::const_iterator transition;
 
-template <typename CharType, typename MatchType>
-const MatchType* 
-Trie<CharType, MatchType>::search(const CharType* str, size_t strlen) const
-{
-    const Node* cur = &(*tree.begin());
-    typename Node::TransitionsType::const_iterator transition;
-    
-    assert(str != NULL);
-    
-    // follow the tree
-    for (unsigned i=0; i<strlen; i++)
-    {
-        transition = cur->transitions.find(str[i]);
-        if (transition == cur->transitions.end())
-            return NULL;
-        else
-            cur = transition->second;
+        assert(str != NULL);
+
+        // follow the tree
+        for (unsigned i=0; i<strlen; i++)
+        {
+            transition = cur->transitions.find(str[i]);
+            if (transition == cur->transitions.end())
+                return NULL;
+            else
+                cur = transition->second;
+        }
+
+        // return the match, if there is one
+        return cur->match;
     }
-    
-    // return the match, if there is one
-    return cur->match;
-}
 
 } // namespace Libwheel
 
@@ -168,5 +165,3 @@ int main()
 }
     
 #endif
-
-#endif /* LIBWHEEL_TRIE_IMPL_CPP */

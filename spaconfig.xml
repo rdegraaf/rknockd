@@ -14,7 +14,7 @@
     <request port="25" protocol="tcp" secret="qwertyuiop">
         44b2f58b8e81bc9cdf5259b08064
     </request>
-    <request port="53" secret="qwertyuiop">
+    <request port="23" secret="qwertyuiop">
         0x25c2a6ddd3ec
     </request>
 
