@@ -66,6 +66,12 @@ Protocol::getNumber() const
     return number;
 }
 
+const std::string&
+Protocol::getName() const
+{
+    return name;
+}
+
 Protocol::Protocol(unsigned num, const std::string& n)
 : number(num), name(n)
 {}
@@ -188,6 +194,11 @@ Request::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((C
                 proto = Protocol::UDP;
             else
                 throw ConfigException("Unknown protocol specified for element \"request\"");
+        }
+        else if ((*iter)->get_name() == "address") // not required
+        {
+            // FIXME: implement this
+            throw ConfigException("Attribute \"address\" is not implemented");
         }
         else if ((*iter)->get_name() == "ignore_client_addr") // not required
         {

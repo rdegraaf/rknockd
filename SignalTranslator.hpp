@@ -1,8 +1,8 @@
 #ifndef SIGNAL_TRANSLATOR_HPP
     #define SIGNAL_TRANSLATOR_HPP
     #include <exception>
-    #include <stdexcept>
     #include <string>
+    #include <stdexcept>
     #include <csignal>
     #include <boost/utility.hpp>
 

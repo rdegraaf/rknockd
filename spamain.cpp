@@ -7,6 +7,8 @@ the mutex, while handling signals in a separate thread that doesn't exit until
 it gets the mutex.
 */
 
+#define PROGNAME spaserver
+#define VERSION 0.1
 
 #include <iostream>
 #include <iomanip>
@@ -19,6 +21,7 @@ it gets the mutex.
 #include <cstring>
 #include <cerrno>
 #include <cstddef>
+#include <cctype>
 #include <tr1/unordered_map>
 #include <boost/array.hpp>
 #include <boost/cstdint.hpp>
@@ -29,6 +32,7 @@ it gets the mutex.
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <getopt.h>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "Config.hpp"
 #include "NFQ.hpp"
@@ -36,6 +40,9 @@ it gets the mutex.
 #include "SpaConfig.hpp"
 #include "Trie.hpp"
 #include "SignalTranslator.hpp"
+#include "Logmsg.hpp"
+#include "spc_sanitize.h"
+
 
 namespace Rknockd
 {
@@ -58,7 +65,7 @@ ipv4_to_string(boost::uint32_t a)
        << static_cast<unsigned>(addr.u8[3]);
     return os.str();
 }
-    
+
 
 class SpaListener : public Listener
 {
@@ -254,21 +261,24 @@ SpaListener::HostRecord::getResponse() const
 }
 
 
-/* Creates an AddressPair from a NfqUdpPacket 
+/* 
+Creates an AddressPair from a NfqUdpPacket 
 */
 SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
 {}
 
 
-/* Creates an AddressPair from a HostRecord
+/* 
+Creates an AddressPair from a HostRecord
 */
 SpaListener::AddressPair::AddressPair(const SpaListener::HostRecord& host)
 : saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
 {}
 
 
-/* Looks up a host in the host hash table 
+/* 
+Looks up a host in the host hash table 
 If an entry exists in the hash table matching *pkt, return it.  Otherwise, 
 throw an UnknownHostException.
 */
@@ -282,7 +292,8 @@ SpaListener::getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException
 }
 
 
-/* Checks if a response is valid
+/* 
+Checks if a response is valid
 If the response in *pkt is the one expected for host, return true.  Otherwise,
 return false.
 */
@@ -304,7 +315,8 @@ SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 }
 
 
-/* Opwn a port to a source host after successful authentication
+/* 
+Open a port to a source host after successful authentication
 Sends a message to ipt_REMAP asking it to redirect the next connection to 
 the random target port to the requested destination port
 */
@@ -316,12 +328,10 @@ SpaListener::openPort(const HostRecord& host)
     int ret;
     const SpaRequest& req = host.getRequest();
 
-#ifdef DEBUG
-    std::cout << "Forwarding " << ipv4_to_string(host.getSrcAddr()) << ':' 
-              << host.getTargetPort() << '/' << req.getProtocol() << " to " 
-              << ipv4_to_string(host.getDstAddr()) << ':' << req.getPort()
-              << std::endl;
-#endif
+    LibWheel::logmsg(LibWheel::logmsg_info, "Forwarding %s:%hu/%s to %s:%hu", 
+        ipv4_to_string(host.getSrcAddr()).c_str(), host.getTargetPort(), 
+        req.getProtocol().getName().c_str(), 
+        ipv4_to_string(host.getDstAddr()).c_str(), req.getPort());
     
     // build a remap rule
     memset(&remap, 0, sizeof(remap));
@@ -340,21 +350,22 @@ SpaListener::openPort(const HostRecord& host)
     fd = open("/proc/"REMAP_PROC_FILE, O_WRONLY);
     if (fd == -1)
     {
-        std::cerr << "Error opening /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
+        LibWheel::logmsg(LibWheel::logmsg_err, "Error opening /proc/"REMAP_PROC_FILE": %s", strerror(errno));
         return;
     }
     ret = write(fd, &remap, sizeof(remap));
     if (ret == -1)
-        std::cerr << "Error writing to /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
+        LibWheel::logmsg(LibWheel::logmsg_err, "Error writing to /proc/"REMAP_PROC_FILE": %s", strerror(errno));
     else if (ret != sizeof(remap))
-        std::cerr << "Error writing to /proc/"REMAP_PROC_FILE": message truncated" << std::endl;
+        LibWheel::logmsg(LibWheel::logmsg_err, "Error writing to /proc/"REMAP_PROC_FILE": message truncated");
     ret = close(fd);
     if (ret == -1)
-        std::cerr << "Error closing /proc/"REMAP_PROC_FILE": " << strerror(errno) << std::endl;
+        LibWheel::logmsg(LibWheel::logmsg_err, "Error closing /proc/"REMAP_PROC_FILE": %s", strerror(errno));
 }
 
 
-/* Remove an entry from the host hash table
+/* 
+Remove an entry from the host hash table
 */
 void 
 SpaListener::deleteState(const HostRecord& host)
@@ -363,7 +374,8 @@ SpaListener::deleteState(const HostRecord& host)
 }
 
 
-/* Checks if a packet contains a valid request string
+/* 
+Checks if a packet contains a valid request string
 If *pkt contains a valid request message, return a reference to the 
 corresponding SpaRequest object.  Otherwise, throw a BadRequestException.
 */
@@ -393,15 +405,15 @@ SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestExcepti
         throw BadRequestException("Unrecognized request");
     else
     {
-#ifdef DEBUG
-    std::cout << "Good request received from " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
-#endif
+        if (verbose)
+            LibWheel::logmsg(LibWheel::logmsg_info, "Good request received from %s:%hu", ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
         return *request;
     }
 }
 
 
-/* Sends a challenge message to a client
+/* 
+Sends a challenge message to a client
 Generate a random challenge and target port, build a challenge message, send it
 to the source of *pkt, and add an entry for the client to the hosts hash table.
 Throws: SocketException - error sending challenge message
@@ -467,13 +479,14 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
 
     delete[] challenge;
     delete[] rand_bytes;
-#ifdef DEBUG
-    std::cout << "Sent challenge, dport=" << dport << " to " << ipv4_to_string(pkt->getIpSource()) << ':' << pkt->getUdpSource() << std::endl;
-#endif
+
+    if (verbose)
+        LibWheel::logmsg(LibWheel::logmsg_info, "Sent challenge, dport=%hu to %s:%hu", dport, ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
 }
 
 
-/* Handle a packet received from Netlink
+/* 
+Handle a packet received from Netlink
 */
 void 
 SpaListener::handlePacket(const NFQ::NfqPacket* p)
@@ -495,7 +508,7 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
         }
         else
         {
-            std::cerr << "Incorrect response received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << std::endl;
+            LibWheel::logmsg(LibWheel::logmsg_err, "Incorrect response received from %s:%hu", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource());
         }
         deleteState(host);
     }
@@ -511,13 +524,14 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
         }
         catch (BadRequestException& e)
         {
-            std::cerr << "Incorrect request received from " << ipv4_to_string(packet->getIpSource()) << ':' << packet->getUdpSource() << ": " << e.what() << std::endl;
+            LibWheel::logmsg(LibWheel::logmsg_err, "Incorrect request received from %s:%hu: %s", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource(), e.what());
         }
     }
 }
 
 
-/* Compute the SHA1 hash of a string
+/* 
+Compute the SHA1 hash of a string
 */
 void 
 SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str)
@@ -536,7 +550,8 @@ SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, 
 
 // FIXME:  use boost::array where possible
 
-/* Build an struct PortMessage and encrypt it with AES-128-ECB
+/* 
+Build an struct PortMessage and encrypt it with AES-128-ECB
 Throws: CryptoException - if there is an error in the crypto library
 */
 void 
@@ -579,7 +594,8 @@ SpaListener::encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t
 }    
 
 
-/* Compute a MAC on a challenge
+/* 
+Compute a MAC on a challenge
 Throws: CryptoException - if there is an error in the crypto library
 */
 void 
@@ -628,11 +644,12 @@ SpaListener::computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std:
 }
 
 
-/* Constructor for SpaListener
+/* 
+Constructor for SpaListener
 Initialize, program the request matcher trie with all request strings
 */
-SpaListener::SpaListener(const SpaConfig& c)
-: config(c), hostTable(), requestTable()
+SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging)
+: Listener(verbose_logging), config(c), hostTable(), requestTable()
 {
     // program the requests trie with all request strings
     const std::vector<SpaRequest>& requests = c.getRequests();
@@ -650,7 +667,8 @@ SpaListener::~SpaListener()
 {}
 
 
-/* Entry point for SpaListener
+/* 
+Entry point for SpaListener
 Designed this way for compatibility with boost::thread
 */
 void 
@@ -675,9 +693,9 @@ SpaListener::operator() ()
                     // set the verdict first, so that we don't keep the kernel waiting
                     packet->setVerdict(NFQ::NfqPacket::DROP);
                     sock.sendResponse(packet);
-#ifdef DEBUG
+/*#ifdef DEBUG
                     printPacketInfo(packet, std::cout);
-#endif
+#endif*/
                     // handle the packet
                     handlePacket(packet);
 
@@ -685,13 +703,13 @@ SpaListener::operator() ()
                 }
                 catch (NFQ::NfqException& e)
                 {
-                    std::cerr << "Error processing packet: " << e.what() << std::endl;
+                    LibWheel::logmsg(LibWheel::logmsg_err, "Error processing packet: %s", e.what());
                 }
             }
         }
         catch (LibWheel::Interrupt& e) // thrown by SIGINT handler
         {
-            std::cerr << "SIGINT caught; exiting normally" << std::endl;
+            LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
         }
         try
         {
@@ -699,45 +717,160 @@ SpaListener::operator() ()
         }
         catch (NFQ::NfqException& e)
         {
-            std::cerr << "Error disconnecting from NFQUEUE: " << e.what() << std::endl;
+            LibWheel::logmsg(LibWheel::logmsg_err, "Error disconnecting from NFQUEUE: %s", e.what());
         }
     }
     catch (NFQ::NfqException& e)
     {
-        std::cerr << "Error connecting to NFQUEUE: " << e.what() << std::endl;
+        LibWheel::logmsg(LibWheel::logmsg_err, "Error connecting to NFQUEUE: %s", e.what());
     }
 }
 
+
+// translate SIGINT to LibWheel::Interrupt
 LibWheel::SignalTranslator<LibWheel::Interrupt> sigintTranslator;
 
 } // namespace Rknockd
 
 
+/* 
+Prints version info
+*/
+void print_version()
+{
+    std::cout << QUOTE(PROGNAME) << ": " <<  QUOTE(VERSION)
+              << "\nCopyright (c) Rennie deGraaf, 2007.  All rights reserved."
+              << std::endl;
+}
+
+
+/*
+Print a help message
+*/
+void print_help()
+{
+    std::cout << "Usage: "QUOTE(PROGNAME)" [-c <config file>] [-D] [-V] [-h] [-v]\n"
+              << "where -c <config file> - use the specified configuration file\n"
+              << "      -D - run the program as a daemon\n"
+              << "      -V - enable verbose logging\n"
+              << "      -h - print this message\n"
+              << "      -v - print version information" << std::endl;
+    return;
+}
+
+
+void parse_args(int argc, char** argv, std::string& config_file, bool& daemon, bool& verbose)
+{
+    char* short_options = "c:DhvV";
+    static struct option long_options[] = {
+        {"config", 1, 0, 'c'},
+        {"daemon", 0, 0, 'D'},
+        {"verbose", 0, 0, 'V'},
+        {"help", 0, 0, 'h'},
+        {"version", 0, 0, 'v'},
+        {0, 0, 0, 0}
+    };
+    int option_index = 0;
+    int c;
+    
+    while ((c = getopt_long(argc, argv, short_options, long_options, &option_index)) != -1)
+    {
+        switch (c)
+        {
+            case 'c':
+                config_file = optarg;
+                break;
+            case 'D':
+                daemon = true;
+                break;
+            case 'V':
+                verbose = true;
+                break;
+            case 'h':
+                print_version();
+                print_help();
+                std::exit(EXIT_SUCCESS);
+            case 'v':
+                print_version();
+                std::exit(EXIT_SUCCESS);
+            case '?':
+                if (isprint(optopt))
+                    std::cerr << "Unrecognized option -" << static_cast<char>(optopt) << std::endl;
+                else
+                    std::cerr << "Unrecognized option character 0x" << std::hex << optopt << std::dec << std::endl;
+                std::exit(EXIT_FAILURE);
+            case ':':
+                std::cerr << "File name expected after option -c" << std::endl;
+                std::exit(EXIT_FAILURE);
+            case '0':
+            default:
+                std::cerr << "getopt() returned an unexpected value" << std::endl;
+                std::exit(EXIT_FAILURE);
+        }
+    }
+    
+    if (optind < argc)
+    {
+        std::cerr << "Unrecognized garbage on the command line: ";
+        while (optind < argc)
+            std::cerr << argv[optind++] << ' ';
+        std::cerr >> std::endl;
+        std::exit(EXIT_FAILURE);
+    }
+}
 
 
 int
-main(const int argc, const char** argv)
+main(int argc, char** argv)
 {
     std::string config_file = "spaconfig.xml";
+    bool make_daemon = false;
+    bool verbose = false
     
+    // initialize the logmsg facility (spc_sanitize_* needs it)
+    LibWheel::logmsg.open(LibWheel::logmsg_stderr, 0, argv[0]);
+    
+    // sanitize the system
+    spc_sanitize_environment(0, NULL);
+    spc_sanitize_files();
+    
+    // parse command-line arguments
+    parse_args(argc, argv, config_file, make_daemon, verbose);
+    
+#ifdef DEBUG
+    verbose = true;
+    make_daemon = false;
+#endif
+
     try
     {
         // load configuration
         Rknockd::SpaConfig config(config_file);
-#ifdef DEBUG
+/*#ifdef DEBUG
         config.printConfig(std::cout);
-#endif
+#endif*/
         
+        // we've finished initializing; time to summon Beelzebub
+        if (make_daemon)
+        {
+            // Ia Ia Cthulhu Fhtagn!
+            daemon(0, 0);
+
+            // stderr is closed; switch to syslog
+            LibWheel::logmsg.open(LibWheel::logmsg_syslog, 0, argv[0]);
+        }
+
         // run the listener
-        Rknockd::SpaListener listener(config);
+        Rknockd::SpaListener listener(config, verbose);
         listener();
     }
     catch (const Rknockd::ConfigException& e)
     {
-        std::cerr <<  "Error loading configuration file: " << e.what() << std::endl;
+        std::cerr << "Error loading configuration file " << config_file << ": " << e.what() << std::endl;;
         std::exit(EXIT_FAILURE);
     }
     
+    LibWheel::logmsg.close();
     return EXIT_SUCCESS;
 }
 

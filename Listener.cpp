@@ -3,7 +3,8 @@
 namespace Rknockd
 {
 
-Listener::Listener()
+Listener::Listener(bool v)
+: verbose(v)
 {}
 
 Listener::~Listener()

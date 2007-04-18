@@ -31,6 +31,7 @@
             bool operator!=(unsigned num) const;
             bool operator!=(const Protocol& p) const;
             unsigned getNumber() const;
+            const std::string& getName() const;
             friend std::ostream& operator<<(std::ostream&, const Protocol&);  
           private:
             Protocol(unsigned num, const std::string& n);
