@@ -1,10 +1,8 @@
 /* 
 Killing this program *can* result in dropped packets.  Since they're sent to 
 netlink from the kernel before this program knows about them, there's no way to 
-avoid it.  If packet loss turns out to be a problem, the chance can be reduced
-by using NFQ::waitForPacket(), acquiring a mutex, processing it and releasing
-the mutex, while handling signals in a separate thread that doesn't exit until
-it gets the mutex.
+avoid it.  SIGINT triggers a synchronous exit after any current packet has been 
+processed; use SIGINT to shut down this program.
 
 Note: this program uses asynchronous signal handlers.  If threading is added,
 then these will need to be converted to synchronous signal handlers.
@@ -19,6 +17,7 @@ then these will need to be converted to synchronous signal handlers.
 #include <sstream>
 #include <map>
 #include <vector>
+#include <queue>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +34,7 @@ then these will need to be converted to synchronous signal handlers.
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <getopt.h>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "Config.hpp"
@@ -45,6 +45,7 @@ then these will need to be converted to synchronous signal handlers.
 #include "Logmsg.hpp"
 #include "Signals.hpp"
 #include "spc_sanitize.h"
+#include "time.h"
 
 
 namespace Rknockd
@@ -164,11 +165,24 @@ class SpaListener : public Listener
     };
 
     typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
-    typedef Libwheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
+    typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
 
+    class HostTableGC
+    {
+      public:
+        HostTableGC(HostTable& t, bool verbose_logging);
+        void schedule(AddressPair& addr, long secs, long usecs);
+        void operator()();
+      private:
+        HostTable& table;
+        std::queue<std::pair<struct timeval, AddressPair> > gcQueue;
+        bool verbose;
+    };
+    
     const SpaConfig& config;
     HostTable hostTable;
     RequestTable requestTable;
+    HostTableGC hostTableGC;
 
     static SpaListenerConstructor _classconstructor;
     
@@ -278,6 +292,68 @@ Creates an AddressPair from a HostRecord
 SpaListener::AddressPair::AddressPair(const SpaListener::HostRecord& host)
 : saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
 {}
+
+
+SpaListener::HostTableGC::HostTableGC(HostTable& table, bool verbose_logging)
+: table(table), gcQueue(), verbose(verbose_logging)
+{}
+
+void 
+SpaListener::HostTableGC::schedule(AddressPair& addr, long secs, long usecs)
+{
+    struct timeval time;
+    struct itimerval itime;
+
+    // calculate the GC execution time    
+    gettimeofday(&time, NULL);
+    time.tv_usec += usecs;
+    time.tv_sec += secs;
+    if (time.tv_usec >= 1000000)
+    {
+        time.tv_sec += (time.tv_usec / 1000000);
+        time.tv_usec %= 1000000;
+    }
+    
+    // schedule the GC
+    // it's safe to schedule before pushing to the queue, because the timer
+    // interrupt is handled synchronously
+    if (gcQueue.size() == 0)
+    {
+        itime.it_interval.tv_sec = 0;
+        itime.it_interval.tv_usec = 0;
+        itime.it_value.tv_sec = secs;
+        itime.it_value.tv_usec = usecs;
+        setitimer(ITIMER_REAL, &itime, NULL);
+    }
+    gcQueue.push(std::make_pair(time, addr));
+}
+
+void
+SpaListener::HostTableGC::operator()()
+{
+    struct timeval curtime;
+
+    gettimeofday(&curtime, NULL);
+    
+    // delete old junk
+    while (!gcQueue.empty() && (LibWheel::cmptime(&gcQueue.front().first, &curtime) < 0))
+    {
+        if (verbose && (table.find(gcQueue.front().second) != table.end()))
+            LibWheel::logmsg(LibWheel::logmsg_info, "GC: deleting stale entry");
+        table.erase(gcQueue.front().second);
+        gcQueue.pop();
+    }
+    
+    // schedule the next GC run
+    if (!gcQueue.empty())
+    {
+        struct itimerval itime;
+        itime.it_interval.tv_sec = 0;
+        itime.it_interval.tv_usec = 0;
+        LibWheel::subtime(&itime.it_value, &gcQueue.front().first, &curtime);
+        setitimer(ITIMER_REAL, &itime, NULL);
+    }
+}
 
 
 /* 
@@ -478,7 +554,9 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
 
     // create a record for this host
     HostRecord hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
-    hostTable.insert(std::pair<AddressPair, HostRecord>(AddressPair(hrec), hrec));
+    AddressPair haddr(hrec);
+    hostTable.insert(std::make_pair(haddr, hrec));
+    hostTableGC.schedule(haddr, TIMEOUT_SECS, TIMEOUT_USECS);
 
     delete[] challenge;
     delete[] rand_bytes;
@@ -651,7 +729,7 @@ Constructor for SpaListener
 Initialize, program the request matcher trie with all request strings
 */
 SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging)
-: Listener(verbose_logging), config(c), hostTable(), requestTable()
+: Listener(verbose_logging), config(c), hostTable(), requestTable(), hostTableGC(hostTable, verbose_logging)
 {
     // program the requests trie with all request strings
     const std::vector<SpaRequest>& requests = c.getRequests();
@@ -660,13 +738,18 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging)
     {
         requestTable.addString(i->getRequestString(), *i);
     }
+    
+    // set the SIGALARM handler
+    LibWheel::SignalQueue::setHandler(SIGALRM, boost::ref(hostTableGC));
 }
 
 
 /* Destructor for SpaListener
 */
 SpaListener::~SpaListener()
-{}
+{
+    LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::DEFAULT);
+}
 
 
 /* 
@@ -823,7 +906,6 @@ void sigint_handler()
     throw LibWheel::Interrupt();
 }
 
-// FIXME: need something to clean up old entries in the host table
 
 int
 main(int argc, char** argv)

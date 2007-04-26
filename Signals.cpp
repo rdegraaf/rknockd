@@ -1,6 +1,6 @@
-#ifdef DEBUG
+/*#ifdef DEBUG
     #include <iostream>
-#endif
+#endif*/
 #include <stdexcept>
 #include <cerrno>
 #include <cstring>
@@ -131,6 +131,7 @@ namespace LibWheel
                 throw std::invalid_argument("Invalid action");
             }
 
+            getSignalTable()[sig] = NULL;
             handler = signal(sig, handler);
             if (handler == SIG_ERR)
                 throw std::invalid_argument("Invalid signal number");
@@ -176,9 +177,9 @@ namespace LibWheel
                     throw std::runtime_error(strerror(errno));
             }
     
-#ifdef DEBUG
-            std::cout << "signal " << (int)signal << "received" << std::endl;
-#endif
+/*#ifdef DEBUG
+            std::cout << "signal " << (int)signal << " received" << std::endl;
+#endif*/
             if (getSignalTable()[signal] != NULL)
                 (getSignalTable()[signal])();
         }

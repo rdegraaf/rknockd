@@ -1,6 +1,6 @@
 #include "Trie.hpp"
 
-namespace Libwheel
+namespace LibWheel
 {
 
     UninitializedException::UninitializedException(const std::string& s)
@@ -110,7 +110,7 @@ namespace Libwheel
         return cur->match;
     }
 
-} // namespace Libwheel
+} // namespace LibWheel
 
 
 #if 0
@@ -120,7 +120,7 @@ namespace Libwheel
 
 int main()
 {
-    Libwheel::Trie<boost::uint16_t, std::string> tree;
+    LibWheel::Trie<boost::uint16_t, std::string> tree;
     const std::string* str;
     std::vector<boost::uint16_t> vec1;
     std::vector<boost::uint16_t> vec2;

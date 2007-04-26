@@ -393,8 +393,8 @@ receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_co
     assert(config != NULL);
     
     /* set the socket timeout */
-    timeout.tv_sec = CLIENT_RECEIVE_TIMEOUT_SECS;
-    timeout.tv_usec = CLIENT_RECEIVE_TIMEOUT_USECS;
+    timeout.tv_sec = TIMEOUT_SECS;
+    timeout.tv_usec = TIMEOUT_USECS;
     retval = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if (retval == -1)
     {

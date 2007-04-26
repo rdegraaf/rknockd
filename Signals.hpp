@@ -1,5 +1,5 @@
-#ifndef SIGNALS_HPP
-    #define SIGNALS_HPP
+#ifndef LIBWHEEL_SIGNALS_HPP
+    #define LIBWHEEL_SIGNALS_HPP
     #include <string>
     #include <stdexcept>
     #include <csignal>
@@ -48,4 +48,4 @@
 
     } // namespace LibWheel
     
-#endif /* SIGNAL_HPP */
+#endif /* LIBWHEEL_SIGNAL_HPP */

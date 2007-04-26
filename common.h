@@ -23,8 +23,8 @@
     {
     #endif
     
-        #define CLIENT_RECEIVE_TIMEOUT_SECS 0
-        #define CLIENT_RECEIVE_TIMEOUT_USECS 500000
+        #define TIMEOUT_SECS 1
+        #define TIMEOUT_USECS 0
     
         #define DEFAULT_BASE_PORT           1024
         #define DEFAULT_MAX_KNOCKS          10

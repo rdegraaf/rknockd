@@ -9,7 +9,7 @@
 
     // Note: this implementation doesn't allow more than one result at a time
 
-    namespace Libwheel
+    namespace LibWheel
     {
 
         class UninitializedException : public std::runtime_error
@@ -41,7 +41,7 @@
             std::list<Node> tree;
         };
 
-    } // namespace Libwheel
+    } // namespace LibWheel
 
 #include "Trie_impl.cpp"
 
