@@ -29,6 +29,7 @@
 #include <linux/spinlock.h>
 #include <linux/timer.h>
 #include <linux/jiffies.h>
+#include <linux/stat.h>
 #include <asm/uaccess.h>
 #include <asm/string.h>
 #include <linux/netfilter.h>
@@ -511,6 +512,9 @@ init(void)
     }
     proc_remap->read_proc = remap_proc_read;
     proc_remap->write_proc = remap_proc_write;
+    proc_remap->mode = S_IFREG | S_IWUSR | S_IWGRP;
+    proc_remap->uid = REMAP_PROC_UID;
+    proc_remap->gid = REMAP_PROC_GID;
     proc_remap->owner = THIS_MODULE;
     
     /* initialize the hash table */

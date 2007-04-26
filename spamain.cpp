@@ -5,6 +5,9 @@ avoid it.  If packet loss turns out to be a problem, the chance can be reduced
 by using NFQ::waitForPacket(), acquiring a mutex, processing it and releasing
 the mutex, while handling signals in a separate thread that doesn't exit until
 it gets the mutex.
+
+Note: this program uses asynchronous signal handlers.  If threading is added,
+then these will need to be converted to synchronous signal handlers.
 */
 
 #define PROGNAME spaserver
@@ -39,8 +42,8 @@ it gets the mutex.
 #include "Listener.hpp"
 #include "SpaConfig.hpp"
 #include "Trie.hpp"
-#include "SignalTranslator.hpp"
 #include "Logmsg.hpp"
+#include "Signals.hpp"
 #include "spc_sanitize.h"
 
 
@@ -183,7 +186,7 @@ class SpaListener : public Listener
     static void computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr);
 
   public:
-    SpaListener(const SpaConfig& c);
+    SpaListener(const SpaConfig& c, bool verbose_logging);
     ~SpaListener();
     void operator()();
 };
@@ -562,7 +565,6 @@ SpaListener::encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t
     gcry_error_t err;
     gcry_cipher_hd_t handle;
 
-
     assert(sizeof(PortMessage) == CIPHER_BLOCK_BYTES);
     assert(HASH_BYTES >= PORT_MESSAGE_HASH_BYTES);
     assert(HASH_BYTES >= CIPHER_KEY_BYTES);
@@ -687,7 +689,7 @@ SpaListener::operator() ()
             {
                 try
                 {
-                    sock.waitForPacket();
+                    sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
                     NFQ::NfqPacket* packet = sock.recvPacket(true);
 
                     // set the verdict first, so that we don't keep the kernel waiting
@@ -707,7 +709,7 @@ SpaListener::operator() ()
                 }
             }
         }
-        catch (LibWheel::Interrupt& e) // thrown by SIGINT handler
+        catch (LibWheel::Interrupt& e) // thrown when SIGINT is caught
         {
             LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
         }
@@ -726,9 +728,6 @@ SpaListener::operator() ()
     }
 }
 
-
-// translate SIGINT to LibWheel::Interrupt
-LibWheel::SignalTranslator<LibWheel::Interrupt> sigintTranslator;
 
 } // namespace Rknockd
 
@@ -814,18 +813,24 @@ void parse_args(int argc, char** argv, std::string& config_file, bool& daemon, b
         std::cerr << "Unrecognized garbage on the command line: ";
         while (optind < argc)
             std::cerr << argv[optind++] << ' ';
-        std::cerr >> std::endl;
+        std::cerr << std::endl;
         std::exit(EXIT_FAILURE);
     }
 }
 
+void sigint_handler()
+{
+    throw LibWheel::Interrupt();
+}
+
+// FIXME: need something to clean up old entries in the host table
 
 int
 main(int argc, char** argv)
 {
     std::string config_file = "spaconfig.xml";
     bool make_daemon = false;
-    bool verbose = false
+    bool verbose = false;
     
     // initialize the logmsg facility (spc_sanitize_* needs it)
     LibWheel::logmsg.open(LibWheel::logmsg_stderr, 0, argv[0]);
@@ -849,6 +854,8 @@ main(int argc, char** argv)
 /*#ifdef DEBUG
         config.printConfig(std::cout);
 #endif*/
+
+        LibWheel::SignalQueue::setHandler(SIGINT, sigint_handler);
         
         // we've finished initializing; time to summon Beelzebub
         if (make_daemon)

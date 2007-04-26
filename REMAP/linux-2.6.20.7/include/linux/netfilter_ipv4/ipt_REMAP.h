@@ -10,6 +10,8 @@
     #endif
     
     #define REMAP_PROC_FILE "net/netfilter/remap" /* write rules to this file */
+    #define REMAP_PROC_UID 0
+    #define REMAP_PROC_GID 0
 
     /* Format for remap rules to be written to REMAP_PROC_FILE. 
     All fields must be in network byte order. */

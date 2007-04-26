@@ -6,10 +6,10 @@
     #include <string>
     #include <boost/utility.hpp>
     #include <boost/cstdint.hpp>
+    #include <boost/function.hpp>
     #include <netinet/ip.h>
     #include <netinet/tcp.h>
     #include <netinet/udp.h>
-    #include "SignalTranslator.hpp"
     #include "common.h"
 
     extern "C"
@@ -41,14 +41,15 @@
             enum CopyMode {NONE, META, PACKET};
 
             NfqSocket();
-            NfqSocket(QueueNum num) THROW((LibWheel::SignalException, NfqException));
-            ~NfqSocket() THROW((LibWheel::SignalException, NfqException));
-            void connect(QueueNum num) THROW((LibWheel::SignalException, NfqException));
-            void setCopyMode(CopyMode mode, int range=65535) THROW((LibWheel::SignalException, NfqException));
-            NfqPacket* recvPacket(bool noblock=false) THROW((LibWheel::SignalException, NfqException));
-            void waitForPacket() THROW((LibWheel::SignalException, NfqException));
-            void sendResponse(NfqPacket* pkt) THROW((LibWheel::SignalException, NfqException));
-            void close() THROW((LibWheel::SignalException, NfqException));
+            NfqSocket(QueueNum num) THROW((NfqException));
+            ~NfqSocket() THROW((NfqException));
+            void connect(QueueNum num) THROW((NfqException));
+            void setCopyMode(CopyMode mode, int range=65535) THROW((NfqException));
+            NfqPacket* recvPacket(bool noblock=false) THROW((NfqException));
+            void waitForPacket() THROW((NfqException));
+            void waitForPacket(int func_fd, boost::function<void()> func);
+            void sendResponse(NfqPacket* pkt) THROW((NfqException));
+            void close() THROW((NfqException));
           private:
             bool isConnected;                   // true on sockets that are connected; false otherwise
             QueueNum queueNum;                  // the NFQUEUE queue to which this socket is connected

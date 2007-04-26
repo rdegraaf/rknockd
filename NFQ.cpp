@@ -28,20 +28,20 @@ NfqSocket::NfqSocket()
 : isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
 {}
 
-NfqSocket::NfqSocket(QueueNum num) THROW((LibWheel::SignalException, NfqException))
+NfqSocket::NfqSocket(QueueNum num) THROW((NfqException))
 : isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
 {
     connect(num);
 }
 
-NfqSocket::~NfqSocket() THROW((LibWheel::SignalException, NfqException))
+NfqSocket::~NfqSocket() THROW((NfqException))
 {
     close();
 }
 
 // not thread-safe
 void
-NfqSocket::connect(QueueNum num) THROW((LibWheel::SignalException, NfqException))
+NfqSocket::connect(QueueNum num) THROW((NfqException))
 {
     if (isConnected)
         throw NfqException("Socket already connected");
@@ -73,7 +73,7 @@ NfqSocket::connect(QueueNum num) THROW((LibWheel::SignalException, NfqException)
 }
 
 void 
-NfqSocket::setCopyMode(CopyMode mode, int range) THROW((LibWheel::SignalException, NfqException))
+NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 {
     static boost::uint8_t mode_table[] = 
     {
@@ -88,7 +88,7 @@ NfqSocket::setCopyMode(CopyMode mode, int range) THROW((LibWheel::SignalExceptio
 
 
 NfqPacket* 
-NfqSocket::recvPacket(bool noblock) THROW((LibWheel::SignalException, NfqException))
+NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 {
     char* buf;
     struct nlmsghdr nlh;
@@ -142,7 +142,7 @@ NfqSocket::recvPacket(bool noblock) THROW((LibWheel::SignalException, NfqExcepti
 
 
 void
-NfqSocket::waitForPacket() THROW((LibWheel::SignalException, NfqException))
+NfqSocket::waitForPacket() THROW((NfqException))
 {
     fd_set fds;
     int ret;
@@ -156,9 +156,42 @@ NfqSocket::waitForPacket() THROW((LibWheel::SignalException, NfqException))
     }
     return;
 }
+void 
+NfqSocket::waitForPacket(int func_fd, boost::function<void()> func)
+{
+    fd_set fds;
+    int max_fd;
+    int ret;
+    
+    max_fd = (func_fd > nfq_fd(nfqHandle)) ? func_fd : nfq_fd(nfqHandle);
+    while (1)
+    {
+        FD_ZERO(&fds);
+        FD_SET(nfq_fd(nfqHandle), &fds);
+        FD_SET(func_fd, &fds);
+        do
+        {
+            ret = select(max_fd+1, &fds, NULL, NULL, NULL);
+        } while ((ret == -1) && (errno == EINTR));
+        if (ret == -1)
+        {
+            throw NfqException(std::string("Error waiting for packet: ") + std::strerror(errno));
+        }
+        else if (FD_ISSET(func_fd, &fds))
+        {
+            func();
+            if (ret == 2)
+                return;
+        }
+        else
+            return;
+    }
+}
+    
+    
 
 void
-NfqSocket::sendResponse(NfqPacket* pkt) THROW((LibWheel::SignalException, NfqException))
+NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
 {
     int status;
     
@@ -182,7 +215,7 @@ NfqSocket::sendResponse(NfqPacket* pkt) THROW((LibWheel::SignalException, NfqExc
 
 // not thread-safe
 void
-NfqSocket::close() THROW((LibWheel::SignalException, NfqException))
+NfqSocket::close() THROW((NfqException))
 {
     if (isConnected)
     {
