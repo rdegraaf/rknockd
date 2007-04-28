@@ -3,7 +3,7 @@ CXX=g++
 RM=rm -f
 
 CCFLAGS=-Wall -Wextra -std=c99 -pedantic -g -O2 -DDEBUG
-CXXFLAGS=-Wall -Wextra -ansi -pedantic  -g -O2 -DDEBUG
+CXXFLAGS=-Wall -Wextra -ansi -pedantic -g -O2 -DDEBUG
 
 spaclient_OBJS=spaclient.o
 spaclient_CCFLAGS=

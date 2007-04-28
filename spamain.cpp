@@ -199,7 +199,7 @@ class SpaListener : public Listener
 
   public:
     SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));
-    ~SpaListener() THROW((IOException, NFQ::NfqException));
+    ~SpaListener();
     void operator()();
 };
 
@@ -540,7 +540,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
         throw IOException(std::string("Error sending challenge: ") + std::strerror(errno));
     else if (ret != static_cast<int>(challenge_len))
         throw IOException(std::string("Error sending challenge: message truncated"));
-    ret = close(sock_fd);
+    ret = ::close(sock_fd);
     if (ret == -1)
         throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
 
@@ -750,7 +750,7 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOExce
 
 /* Destructor for SpaListener
 */
-SpaListener::~SpaListener() THROW((IOException, NFQ::NfqException))
+SpaListener::~SpaListener()
 {
     LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::DEFAULT);
 }
@@ -977,6 +977,7 @@ main(int argc, char** argv)
             // run the listener
             listener();
             
+            listener.close();
         }
         catch (const NFQ::NfqException& e)
         {
@@ -985,7 +986,7 @@ main(int argc, char** argv)
     }
     catch (const Rknockd::ConfigException& e)
     {
-        std::cerr << "Error loading configuration file " << config_file << ": " << e.what() << std::endl;;
+        std::cerr << "Error loading configuration file " << config_file << ": " << e.what() << std::endl;
         LibWheel::logmsg.close();
         return EXIT_FAILURE;
     }

@@ -34,9 +34,14 @@ NfqSocket::NfqSocket(QueueNum num) THROW((NfqException))
     connect(num);
 }
 
-NfqSocket::~NfqSocket() THROW((NfqException))
+NfqSocket::~NfqSocket()
 {
-    close();
+    try
+    {
+        close();
+    }
+    catch (const NfqException& e)
+    {}
 }
 
 // not thread-safe

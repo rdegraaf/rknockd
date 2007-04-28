@@ -22,7 +22,7 @@ Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((I
 {
     sock.setCopyMode(NFQ::NfqSocket::PACKET);
     
-    randomFD = open(cfg.getRandomDevice().c_str(), O_RDONLY);
+    randomFD = ::open(cfg.getRandomDevice().c_str(), O_RDONLY);
     if (randomFD == -1)
         throw IOException(std::string("Error opening ") + cfg.getRandomDevice() + ": " + std::strerror(errno));
 
@@ -31,14 +31,33 @@ Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((I
         throw IOException(std::string("Error opening /proc/") + remap + ": " + std::strerror(errno));
 }
 
-Listener::~Listener() THROW((IOException, NFQ::NfqException))
+Listener::~Listener()
 {
-    if (close(remapFD) == -1)
-        throw IOException(std::string("Error closing /proc/") + remapFile + ": " + std::strerror(errno));
+    if (remapFD != 0)
+        ::close(remapFD);
 
-    if (close(randomFD) == -1)
+    if (randomFD != 0)
+        ::close(randomFD);
+    
+    try
+    {
+        sock.close();
+    } 
+    catch (const NFQ::NfqException& e)
+    {}
+}
+
+void
+Listener::close() THROW((NFQ::NfqException, IOException))
+{
+    if (::close(remapFD) == -1)
+        throw IOException(std::string("Error closing /proc/") + remapFile + ": " + std::strerror(errno));
+    remapFD = 0;
+    
+    if (::close(randomFD) == -1)
         throw IOException(std::string("Error closing /proc/") + randomDevice + ": " + std::strerror(errno));
-        
+    randomFD = 0;
+    
     sock.close();
 }
 

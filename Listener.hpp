@@ -20,7 +20,8 @@
         {
           public:
             virtual void operator()() = 0;
-            virtual ~Listener() THROW((IOException, NFQ::NfqException));
+            virtual ~Listener();
+            virtual void close() THROW((IOException, NFQ::NfqException));
           protected:
             Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
             NFQ::NfqSocket sock;
