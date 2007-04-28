@@ -8,6 +8,9 @@ Note: this program uses asynchronous signal handlers.  If threading is added,
 then these will need to be converted to synchronous signal handlers.
 */
 
+// FIXME: drop root privileges after start-up
+// FIXME: do something intelligent with memory used to hold passwords
+
 #define PROGNAME spaserver
 #define VERSION 0.1
 
@@ -46,6 +49,7 @@ then these will need to be converted to synchronous signal handlers.
 #include "Signals.hpp"
 #include "spc_sanitize.h"
 #include "time.h"
+#include "drop_priv.h"
 
 
 namespace Rknockd
@@ -98,12 +102,6 @@ class SpaListener : public Listener
         SocketException(const std::string& s) : runtime_error(s) {}
     };
 
-    class IOException : public std::runtime_error
-    {
-      public:
-        IOException(const std::string& s) : runtime_error(s) {}
-    };
-
     class SpaListenerConstructor
     {
       public:
@@ -120,7 +118,7 @@ class SpaListener : public Listener
         const SpaRequest& request;
         boost::array<boost::uint8_t, MAC_BYTES> response;
       public:
-        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen);
+        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
         ~HostRecord();
         boost::uint32_t getSrcAddr() const;
         boost::uint16_t getSrcPort() const;
@@ -188,11 +186,11 @@ class SpaListener : public Listener
     
     HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
     bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
-    void openPort(const HostRecord& host);
+    void openPort(const HostRecord& host) THROW((IOException));
     void deleteState(const HostRecord& host);
     const SpaRequest& checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException));
     void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
-    void handlePacket(const NFQ::NfqPacket* p);
+    void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
 
     static void getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str);
     static void getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, size_t strlen);
@@ -200,8 +198,8 @@ class SpaListener : public Listener
     static void computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr);
 
   public:
-    SpaListener(const SpaConfig& c, bool verbose_logging);
-    ~SpaListener();
+    SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));
+    ~SpaListener() THROW((IOException, NFQ::NfqException));
     void operator()();
 };
 
@@ -212,17 +210,21 @@ SpaListener::SpaListenerConstructor SpaListener::_classconstructor;
 
 SpaListener::SpaListenerConstructor::SpaListenerConstructor()    
 {
+    // initialize gcrypt
     if (!gcry_check_version (GCRYPT_VERSION))
     {
         std::cerr << "version mismatch" << std::endl;
         std::exit(EXIT_FAILURE);
     }
-    gcry_control(GCRYCTL_DISABLE_SECMEM, 0); // FIXME if supporting secure memory
+    if (geteuid() == 0) // use secure memory if we're running as root
+        gcry_control(GCRYCTL_INIT_SECMEM, 16384, 0);
+    else
+        gcry_control(GCRYCTL_DISABLE_SECMEM, 0); 
     gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
 }
 
 
-SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen)
+SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target), request(req), response()
 {
     SpaListener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
@@ -400,10 +402,9 @@ Sends a message to ipt_REMAP asking it to redirect the next connection to
 the random target port to the requested destination port
 */
 void 
-SpaListener::openPort(const HostRecord& host)
+SpaListener::openPort(const HostRecord& host) THROW((IOException))
 {
     struct ipt_remap remap;
-    int fd;
     int ret;
     const SpaRequest& req = host.getRequest();
 
@@ -426,20 +427,11 @@ SpaListener::openPort(const HostRecord& host)
     remap.ttl = htons(req.getTTL());
 
     // write the remap rule to the kernel driver
-    fd = open("/proc/"REMAP_PROC_FILE, O_WRONLY);
-    if (fd == -1)
-    {
-        LibWheel::logmsg(LibWheel::logmsg_err, "Error opening /proc/"REMAP_PROC_FILE": %s", strerror(errno));
-        return;
-    }
-    ret = write(fd, &remap, sizeof(remap));
+    ret = write(remapFD, &remap, sizeof(remap));
     if (ret == -1)
-        LibWheel::logmsg(LibWheel::logmsg_err, "Error writing to /proc/"REMAP_PROC_FILE": %s", strerror(errno));
+        throw IOException(std::string("Error writing to /proc/"REMAP_PROC_FILE": ") + strerror(errno));
     else if (ret != sizeof(remap))
-        LibWheel::logmsg(LibWheel::logmsg_err, "Error writing to /proc/"REMAP_PROC_FILE": message truncated");
-    ret = close(fd);
-    if (ret == -1)
-        LibWheel::logmsg(LibWheel::logmsg_err, "Error closing /proc/"REMAP_PROC_FILE": %s", strerror(errno));
+        throw IOException("Error writing to /proc/"REMAP_PROC_FILE": message truncated");
 }
 
 
@@ -511,7 +503,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
 
     // read some random data;
     rand_bytes = new boost::uint8_t[rand_len];
-    ret = read(config.getRandomFD(), rand_bytes, rand_len);
+    ret = read(randomFD, rand_bytes, rand_len);
     if (ret < static_cast<int>(rand_len)) // error reading random bytes
         throw IOException(std::string("Error reading random data: ") + std::strerror(errno));
 
@@ -570,12 +562,10 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
 Handle a packet received from Netlink
 */
 void 
-SpaListener::handlePacket(const NFQ::NfqPacket* p)
+SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
 {
     const NFQ::NfqUdpPacket* packet = dynamic_cast<const NFQ::NfqUdpPacket*>(p);
     assert(packet != NULL);
-
-    // FIXME: catch all exceptions
 
     try
     {
@@ -585,15 +575,22 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
         // check if this is a valid response
         if (checkResponse(packet, host))
         {
-            openPort(host);
+            try
+            {
+                openPort(host);
+            }
+            catch (const IOException& e)
+            {
+                LibWheel::logmsg(LibWheel::logmsg_err, "I/O error: %s", e.what());
+            }
         }
         else
         {
-            LibWheel::logmsg(LibWheel::logmsg_err, "Incorrect response received from %s:%hu", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource());
+            LibWheel::logmsg(LibWheel::logmsg_notice, "Incorrect response received from %s:%hu", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource());
         }
         deleteState(host);
     }
-    catch (UnknownHostException& e)
+    catch (const UnknownHostException& e)
     {
         // check if this packet contains a valid request
         try
@@ -603,9 +600,17 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p)
             // we got a valid request; issue a challenge
             issueChallenge(packet, req);
         }
-        catch (BadRequestException& e)
+        catch (const BadRequestException& e)
         {
-            LibWheel::logmsg(LibWheel::logmsg_err, "Incorrect request received from %s:%hu: %s", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource(), e.what());
+            LibWheel::logmsg(LibWheel::logmsg_notice, "Incorrect request received from %s:%hu: %s", ipv4_to_string(packet->getIpSource()).c_str(), packet->getUdpSource(), e.what());
+        }
+        catch (const IOException& e)
+        {
+            LibWheel::logmsg(LibWheel::logmsg_err, "I/O error: %s", e.what());
+        }
+        catch (const SocketException& e)
+        {
+            LibWheel::logmsg(LibWheel::logmsg_err, "Socket error: %s", e.what());
         }
     }
 }
@@ -629,7 +634,6 @@ SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, 
     gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str, strlen);    
 }
 
-// FIXME:  use boost::array where possible
 
 /* 
 Build an struct PortMessage and encrypt it with AES-128-ECB
@@ -728,8 +732,8 @@ SpaListener::computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std:
 Constructor for SpaListener
 Initialize, program the request matcher trie with all request strings
 */
-SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging)
-: Listener(verbose_logging), config(c), hostTable(), requestTable(), hostTableGC(hostTable, verbose_logging)
+SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException))
+: Listener(c, "/proc/"REMAP_PROC_FILE, verbose_logging), config(c), hostTable(), requestTable(), hostTableGC(hostTable, verbose_logging)
 {
     // program the requests trie with all request strings
     const std::vector<SpaRequest>& requests = c.getRequests();
@@ -746,7 +750,7 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging)
 
 /* Destructor for SpaListener
 */
-SpaListener::~SpaListener()
+SpaListener::~SpaListener() THROW((IOException, NFQ::NfqException))
 {
     LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::DEFAULT);
 }
@@ -761,58 +765,41 @@ SpaListener::operator() ()
 {
     try
     {
-        NFQ::NfqSocket sock(config.getNfQueueNum());
-        sock.setCopyMode(NFQ::NfqSocket::PACKET);
-
-        try
+        // loop forever, processing packets
+        // send the process a SIGINT to stop 
+        while (1)
         {
-            // loop forever, processing packets
-            // send the process a SIGINT to stop 
-            while (1)
+            try
             {
-                try
-                {
-                    sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
-                    NFQ::NfqPacket* packet = sock.recvPacket(true);
+                sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
+                NFQ::NfqPacket* packet = sock.recvPacket(true);
 
-                    // set the verdict first, so that we don't keep the kernel waiting
-                    packet->setVerdict(NFQ::NfqPacket::DROP);
-                    sock.sendResponse(packet);
+                // set the verdict first, so that we don't keep the kernel waiting
+                packet->setVerdict(NFQ::NfqPacket::DROP);
+                sock.sendResponse(packet);
 /*#ifdef DEBUG
-                    printPacketInfo(packet, std::cout);
+                printPacketInfo(packet, std::cout);
 #endif*/
-                    // handle the packet
-                    handlePacket(packet);
+                // handle the packet
+                handlePacket(packet);
 
-                    delete packet;
-                }
-                catch (NFQ::NfqException& e)
-                {
-                    LibWheel::logmsg(LibWheel::logmsg_err, "Error processing packet: %s", e.what());
-                }
+                delete packet;
+            }
+            catch (const NFQ::NfqException& e)
+            {
+                LibWheel::logmsg(LibWheel::logmsg_err, "Error processing packet: %s", e.what());
             }
         }
-        catch (LibWheel::Interrupt& e) // thrown when SIGINT is caught
-        {
-            LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
-        }
-        try
-        {
-            sock.close();
-        }
-        catch (NFQ::NfqException& e)
-        {
-            LibWheel::logmsg(LibWheel::logmsg_err, "Error disconnecting from NFQUEUE: %s", e.what());
-        }
     }
-    catch (NFQ::NfqException& e)
+    catch (const LibWheel::Interrupt& e) // thrown when SIGINT is caught
     {
-        LibWheel::logmsg(LibWheel::logmsg_err, "Error connecting to NFQUEUE: %s", e.what());
+        LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
+    }
+    catch (const CryptoException& e)
+    {
+        LibWheel::logmsg(LibWheel::logmsg_crit, "Error in libgcrypt: %s", e.what());
     }
 }
-
-
-} // namespace Rknockd
 
 
 /* 
@@ -907,12 +894,17 @@ void sigint_handler()
 }
 
 
+} // namespace Rknockd
+
+
 int
 main(int argc, char** argv)
 {
     std::string config_file = "spaconfig.xml";
     bool make_daemon = false;
     bool verbose = false;
+    uid_t nobody_uid;
+    gid_t nobody_gid;
     
     // initialize the logmsg facility (spc_sanitize_* needs it)
     LibWheel::logmsg.open(LibWheel::logmsg_stderr, 0, argv[0]);
@@ -922,7 +914,7 @@ main(int argc, char** argv)
     spc_sanitize_files();
     
     // parse command-line arguments
-    parse_args(argc, argv, config_file, make_daemon, verbose);
+    Rknockd::parse_args(argc, argv, config_file, make_daemon, verbose);
     
 #ifdef DEBUG
     verbose = true;
@@ -937,28 +929,73 @@ main(int argc, char** argv)
         config.printConfig(std::cout);
 #endif*/
 
-        LibWheel::SignalQueue::setHandler(SIGINT, sigint_handler);
-        
-        // we've finished initializing; time to summon Beelzebub
-        if (make_daemon)
+        // make sure that we're running as root
+        if (geteuid() != 0)
         {
-            // Ia Ia Cthulhu Fhtagn!
-            daemon(0, 0);
-
-            // stderr is closed; switch to syslog
-            LibWheel::logmsg.open(LibWheel::logmsg_syslog, 0, argv[0]);
+            std::cerr << "This program requires superuser privileges" << std::endl;
+            LibWheel::logmsg.close();
+            return EXIT_FAILURE;
+        }
+        
+        // get the uid and gid for "nobody"
+        nobody_uid = get_user_uid("nobody");
+        if (nobody_uid == (uid_t)-1)
+        {
+            std::cerr << "Error: user \"nobody\" does not exist" << std::endl;
+            LibWheel::logmsg.close();
+            return EXIT_FAILURE;
+        }
+        nobody_gid = get_group_gid("nobody");
+        if (nobody_gid == (gid_t)-1)
+        {
+            std::cerr << "Error: group \"nobody\" does not exist" << std::endl;
+            LibWheel::logmsg.close();
+            return EXIT_FAILURE;
         }
 
-        // run the listener
-        Rknockd::SpaListener listener(config, verbose);
-        listener();
+        LibWheel::SignalQueue::setHandler(SIGINT, Rknockd::sigint_handler);
+        
+        try
+        {
+            Rknockd::SpaListener listener(config, verbose);
+        
+            // we've finished initializing; time to summon Beelzebub
+            if (make_daemon)
+            {
+                // Ia Ia Cthulhu Fhtagn!
+                daemon(0, 0);
+
+                // stderr is closed; switch to syslog
+                LibWheel::logmsg.open(LibWheel::logmsg_syslog, 0, argv[0]);
+            }
+
+            // drop privileges to nobody, nobody
+            // NFQUEUE appears to require root privileges even after opening
+            // FIXME: make this work
+            //drop_priv(nobody_uid, nobody_gid);
+
+            // run the listener
+            listener();
+            
+        }
+        catch (const NFQ::NfqException& e)
+        {
+            LibWheel::logmsg(LibWheel::logmsg_crit, "Error in NFQUEUE: %s", e.what());
+        }
     }
     catch (const Rknockd::ConfigException& e)
     {
         std::cerr << "Error loading configuration file " << config_file << ": " << e.what() << std::endl;;
-        std::exit(EXIT_FAILURE);
+        LibWheel::logmsg.close();
+        return EXIT_FAILURE;
     }
-    
+    catch (const Rknockd::IOException& e)
+    {
+        LibWheel::logmsg(LibWheel::logmsg_err, "I/O error: %s", e.what());
+        LibWheel::logmsg.close();
+        return EXIT_FAILURE;
+    }
+        
     LibWheel::logmsg.close();
     return EXIT_SUCCESS;
 }

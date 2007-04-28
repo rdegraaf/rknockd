@@ -74,7 +74,6 @@
             virtual ~Config();
             const std::string& getFile() const;
             const std::string& getRandomDevice() const;
-            const int getRandomFD() const;
             const boost::uint16_t getBasePort() const;
             const unsigned getChallengeBytes() const;
             const boost::uint16_t getNfQueueNum() const;
@@ -89,7 +88,6 @@
             boost::uint16_t basePort;     // the low-numbered port of the knock range
             unsigned challengeBytes; // the number of bytes to send in a challenge
             std::string randomDevice;     // the name of the random number device
-            int randomFD;
             boost::uint16_t nfQueueNum;
         };
         

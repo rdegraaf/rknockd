@@ -1,14 +1,46 @@
+#include <stdexcept>
+#include <string>
+#include <cstring>
+#include <cerrno>
+#include <unistd.h>
+#include <fcntl.h>
+#include "Config.hpp"
 #include "Listener.hpp"
+#include "common.h"
 
+#include <iostream>
 namespace Rknockd
 {
 
-Listener::Listener(bool v)
-: verbose(v)
+
+IOException::IOException(const std::string& s) 
+: runtime_error(s) 
 {}
 
-Listener::~Listener()
-{}
+Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((IOException, NFQ::NfqException))
+: sock(cfg.getNfQueueNum()), randomDevice(cfg.getRandomDevice()), remapFile(remap), randomFD(), remapFD(), verbose(v)
+{
+    sock.setCopyMode(NFQ::NfqSocket::PACKET);
+    
+    randomFD = open(cfg.getRandomDevice().c_str(), O_RDONLY);
+    if (randomFD == -1)
+        throw IOException(std::string("Error opening ") + cfg.getRandomDevice() + ": " + std::strerror(errno));
+
+    remapFD = open(remap.c_str(), O_WRONLY);
+    if (remapFD == -1)
+        throw IOException(std::string("Error opening /proc/") + remap + ": " + std::strerror(errno));
+}
+
+Listener::~Listener() THROW((IOException, NFQ::NfqException))
+{
+    if (close(remapFD) == -1)
+        throw IOException(std::string("Error closing /proc/") + remapFile + ": " + std::strerror(errno));
+
+    if (close(randomFD) == -1)
+        throw IOException(std::string("Error closing /proc/") + randomDevice + ": " + std::strerror(errno));
+        
+    sock.close();
+}
 
 void 
 Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out) const

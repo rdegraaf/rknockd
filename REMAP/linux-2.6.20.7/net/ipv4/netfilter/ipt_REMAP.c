@@ -82,7 +82,6 @@ remap_hash_gc(unsigned long data)
     unsigned i;
     unsigned long next = jiffies + msecs_to_jiffies(65535); /* maximum possible ttl */
     
-    
     spin_lock_bh(&remap_hash_lock);
     
     /* remove expired entries */

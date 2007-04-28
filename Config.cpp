@@ -263,17 +263,14 @@ Request::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((C
 
 
 Config::Config(std::string& filename)
-: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(DEFAULT_CHALLENGE_BYTES), randomDevice(DEFAULT_RANDOM_DEVICE), randomFD(-1), nfQueueNum(0)
+: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(DEFAULT_CHALLENGE_BYTES), randomDevice(DEFAULT_RANDOM_DEVICE), nfQueueNum(0)
 {
     // we can't load the config file here because in a constructor, we don't 
     // know what subclass we are
 }
 
 Config::~Config()
-{
-    if (randomFD != -1)
-        close(randomFD);
-}
+{}
 
 const std::string& 
 Config::getFile() const
@@ -285,12 +282,6 @@ const std::string&
 Config::getRandomDevice() const
 {
     return randomDevice;
-}
-
-const int
-Config::getRandomFD() const
-{
-    return randomFD;
 }
 
 const boost::uint16_t 
@@ -424,11 +415,6 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
         throw ConfigException("Value of \"challenge_bytes\" is too small for good security in element \"rknockd\"");
     else if (challengeBytes > MAX_CHALLENGE_BYTES)
         throw ConfigException("Unreasonably large value of \"challenge_bytes\" in element \"rknockd\"");
-    
-    // open the random device
-    randomFD = open(randomDevice.c_str(), O_RDONLY);
-    if (randomFD == -1)
-        throw ConfigException(std::string("Error opening random device: " + std::string(strerror(errno))));
 }
 
 void 
