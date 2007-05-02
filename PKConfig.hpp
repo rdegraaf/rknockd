@@ -16,7 +16,7 @@
             const std::set<boost::uint16_t>& getEncodedKnocks() const;
             void printRequest(std::ostream& os) const;
           private:
-            void getRequestString(const std::string& str, const Config* config) THROW((ConfigException));
+            void parseRequestString(const std::string& str, const Config* config) THROW((ConfigException));
             std::vector<boost::uint16_t> knocks;
             std::set<boost::uint16_t> encodedKnocks;
 

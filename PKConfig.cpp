@@ -44,7 +44,7 @@ PKRequest::printRequest(std::ostream& os) const
 
 
 void 
-PKRequest::getRequestString(const std::string& str, const Config* c) THROW((ConfigException))
+PKRequest::parseRequestString(const std::string& str, const Config* c) THROW((ConfigException))
 {
     boost::tokenizer<> tokens(str);
     boost::uint16_t knock;

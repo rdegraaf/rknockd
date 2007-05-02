@@ -84,52 +84,52 @@ operator<<(std::ostream& out, const Protocol& p)
 }
 
 
-Request::Request()
+RequestBase::RequestBase()
 : proto(Protocol::TCP), port(), ttl(DEFAULT_TTL*1000), ignoreClientAddr(false), secret()
 {}
 
-Request::~Request()
+RequestBase::~RequestBase()
 {}
 
 const Protocol&
-Request::getProtocol() const
+RequestBase::getProtocol() const
 {
     return proto;
 }
 
 const boost::uint16_t 
-Request::getPort() const
+RequestBase::getPort() const
 {
     return port;
 }
 
 const boost::uint32_t 
-Request::getAddr() const
+RequestBase::getAddr() const
 {
     // FIXME: option not implemented
     return 0;
 }
 
 const boost::uint16_t 
-Request::getTTL() const
+RequestBase::getTTL() const
 {
     return ttl;
 }
 
 const bool
-Request::getIgnoreClientAddr() const
+RequestBase::getIgnoreClientAddr() const
 {
     return ignoreClientAddr;
 }
 
 const std::string 
-Request::getSecret() const
+RequestBase::getSecret() const
 {
     return secret;
 }
 
 void 
-Request::printRequest(std::ostream& os) const
+RequestBase::printRequest(std::ostream& os) const
 {
     os   << "    port:        " << port
        << "\n    protocol:    " << proto
@@ -138,8 +138,8 @@ Request::printRequest(std::ostream& os) const
        << std::endl;
 }
 
-Request&
-Request::operator=(const Request& req)
+/*RequestBase&
+RequestBase::operator=(const Request& req)
 {
     if (this != &req)
     {
@@ -149,10 +149,10 @@ Request::operator=(const Request& req)
         secret = req.secret;
     }
     return *this;
-}
+}*/
 
 void
-Request::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((ConfigException))
+RequestBase::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((ConfigException))
 {
     assert(elmt != NULL);
     
@@ -246,7 +246,7 @@ Request::parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((C
                 continue;
             else
             {
-                getRequestString(std::string(tnode->get_content()), config);
+                parseRequestString(std::string(tnode->get_content()), config);
                 have_request = true;
             }
         }

@@ -8,17 +8,19 @@
     {
         class SpaConfig; // forward declaration
 
-        class SpaRequest : public Request
+        typedef std::vector<boost::uint8_t> SpaRequestString;
+        
+        struct SpaRequestPrinter
         {
-          public:
-            SpaRequest(const xmlpp::Element* elmt, const SpaConfig& config) THROW((ConfigException));
-            const std::vector<boost::uint8_t>& getRequestString() const;
-            void printRequest(std::ostream& os) const;
-          private:
-            void getRequestString(const std::string& str, const Config* config) THROW((ConfigException));
-            std::vector<boost::uint8_t> requestStr;
-
+            void operator() (std::ostream& os, const SpaRequestString& req) const;
         };
+        
+        struct SpaRequestParser
+        {
+            void operator() (SpaRequestString& req, const std::string& str, const Config*) const THROW((ConfigException));
+        };
+        
+        typedef Request<SpaRequestString, SpaRequestPrinter, SpaRequestParser, SpaConfig> SpaRequest;
 
         class SpaConfig : public Config
         {
@@ -34,7 +36,7 @@
       
     
         };
-
+        
     } //  namespace Rknockd
 
 #endif /* RKNOCKD_SPACONFIG_HPP */

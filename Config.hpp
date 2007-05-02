@@ -41,32 +41,6 @@
         std::ostream& operator<<(std::ostream& out, const Protocol& p);
             
         
-        class Config; // forward declaration
-        
-        class Request
-        {
-          public:
-            Request();
-            virtual ~Request();
-            const Protocol& getProtocol() const;
-            const boost::uint16_t getPort() const;
-            const boost::uint32_t getAddr() const;
-            const boost::uint16_t getTTL() const;
-            const bool getIgnoreClientAddr() const;
-            const std::string getSecret() const;
-            virtual void printRequest(std::ostream& os) const;
-            Request& operator=(const Request& req);
-          protected:
-            void parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((ConfigException));
-            virtual void getRequestString(const std::string& str, const Config* config) THROW((ConfigException)) = 0;
-            
-            Protocol proto;
-            boost::uint16_t port;
-            boost::uint16_t ttl;
-            bool ignoreClientAddr;
-            std::string secret;
-        };
-        
         class Config
         {
           public:
@@ -91,6 +65,79 @@
             boost::uint16_t nfQueueNum;
         };
         
+        
+        class RequestBase
+        {
+          public:
+            RequestBase();
+            virtual ~RequestBase();
+            const Protocol& getProtocol() const;
+            const boost::uint16_t getPort() const;
+            const boost::uint32_t getAddr() const;
+            const boost::uint16_t getTTL() const;
+            const bool getIgnoreClientAddr() const;
+            const std::string getSecret() const;
+            virtual void printRequest(std::ostream& os) const;
+            //RequestBase& operator=(const RequestBase& req);
+          protected:
+            void parseRequest(const xmlpp::Element* elmt, const Config* config) THROW((ConfigException));
+            virtual void parseRequestString(const std::string& str, const Config* config) THROW((ConfigException)) = 0;
+            
+            Protocol proto;
+            boost::uint16_t port;
+            boost::uint16_t ttl;
+            bool ignoreClientAddr;
+            std::string secret;
+        };
+        
+        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
+        class Request : public RequestBase
+        {
+          public:
+            typedef RequestStrType RequestString;
+            Request(const xmlpp::Element* elmt, const ConfigType& config) THROW((ConfigException));
+            const RequestStrType& getRequestString() const;
+            void printRequest(std::ostream& os) const;
+          private:
+            void parseRequestString(const std::string& str, const Config* config) THROW((ConfigException));
+            RequestStrType requestStr;
+            static const RequestPrinterType requestPrinter;
+            static const RequestParserType requestParser;
+        };
+        
+
+        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
+        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::Request(const xmlpp::Element* elmt, const ConfigType& config) THROW((ConfigException))
+        : RequestBase(), requestStr()
+        {
+            // this can't be called by the base class constructor, since it doesn't know 
+            // what subclass it is
+            parseRequest(elmt, &config);
+        }
+
+        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
+        const RequestStrType&
+        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::getRequestString() const
+        {
+            return requestStr;
+        }
+
+        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
+        void
+        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::printRequest(std::ostream& os) const
+        {
+            requestPrinter(os, requestStr);
+
+            // print the basics
+            Request::printRequest(os);
+        }
+
+        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
+        void 
+        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::parseRequestString(const std::string& str, const Config* cfg) THROW((ConfigException))
+        {
+            requestParser(requestStr, str, cfg);
+        }
     }
 
 #endif // RKNOCKD_CONFIG_HPP

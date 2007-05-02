@@ -90,12 +90,6 @@ class SpaListener : public Listener
         UnknownHostException(const std::string& s) : runtime_error(s) {}
     };
 
-    class CryptoException : public std::runtime_error
-    {
-      public:
-        CryptoException(const std::string& s) : runtime_error(s) {}
-    };
-
     class SocketException : public std::runtime_error
     {
       public:
@@ -108,25 +102,37 @@ class SpaListener : public Listener
         SpaListenerConstructor();
     };
     
-    class HostRecord
+    class HostRecordBase
     {
+      protected:
         boost::uint32_t saddr;
         boost::uint32_t daddr;
         boost::uint16_t sport;
         boost::uint16_t dport;
         boost::uint16_t targetPort;
-        const SpaRequest& request;
-        boost::array<boost::uint8_t, MAC_BYTES> response;
+        //boost::array<boost::uint8_t, MAC_BYTES> response;
       public:
-        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
-        ~HostRecord();
+        HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException));
+        virtual ~HostRecordBase();
         boost::uint32_t getSrcAddr() const;
         boost::uint16_t getSrcPort() const;
         boost::uint32_t getDstAddr() const;
         boost::uint16_t getDstPort() const;
         boost::uint16_t getTargetPort() const;
-        const SpaRequest& getRequest() const;
-        const boost::array<boost::uint8_t, MAC_BYTES>& getResponse() const;
+        //const boost::array<boost::uint8_t, MAC_BYTES>& getResponse() const;
+    };
+    
+    template <typename ReqType, typename RespType>
+    class HostRecord : public HostRecordBase
+    {
+        const ReqType& request;
+        RespType response;
+      public:
+        typedef ReqType RequestType;
+        typedef RespType ResponseType;
+        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
+        const ReqType& getRequest() const;
+        const RespType& getResponse() const;
     };
     
     struct AddressPair
@@ -136,7 +142,7 @@ class SpaListener : public Listener
         boost::uint16_t sport;
         boost::uint16_t dport;
         AddressPair(const NFQ::NfqUdpPacket* pkt);
-        AddressPair(const SpaListener::HostRecord& host);
+        AddressPair(const SpaListener::HostRecordBase& host);
     };
     
     struct AddressPairHash
@@ -162,7 +168,8 @@ class SpaListener : public Listener
         boost::uint8_t u8[sizeof(boost::uint32_t)];
     };
 
-    typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
+    typedef boost::array<boost::uint8_t, MAC_BYTES> SpaResponse;
+    typedef std::tr1::unordered_map<AddressPair, HostRecord<SpaRequest, SpaResponse>, AddressPairHash, AddressPairEqual> HostTable;
     typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
 
     class HostTableGC
@@ -184,10 +191,10 @@ class SpaListener : public Listener
 
     static SpaListenerConstructor _classconstructor;
     
-    HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
-    bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
-    void openPort(const HostRecord& host) THROW((IOException));
-    void deleteState(const HostRecord& host);
+    HostRecord<SpaRequest, SpaResponse>& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
+    bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaRequest, SpaResponse>& host);
+    void openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IOException));
+    void deleteState(const HostRecord<SpaRequest, SpaResponse>& host);
     const SpaRequest& checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException));
     void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
     void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
@@ -200,7 +207,6 @@ class SpaListener : public Listener
   public:
     SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));
     ~SpaListener();
-    void operator()();
 };
 
 
@@ -224,57 +230,68 @@ SpaListener::SpaListenerConstructor::SpaListenerConstructor()
 }
 
 
-SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
-: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target), request(req), response()
+SpaListener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException))
+: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target)
+{}
+
+
+template <typename ReqType, typename RespType>
+SpaListener::HostRecord<ReqType, RespType>::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
+: HostRecordBase(pkt, target), request(req), response()
 {
     SpaListener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
 }
 
 
-SpaListener::HostRecord::~HostRecord()
+SpaListener::HostRecordBase::~HostRecordBase()
 {}
 
 
 boost::uint32_t 
-SpaListener::HostRecord::getSrcAddr() const
+SpaListener::HostRecordBase::getSrcAddr() const
 {
     return saddr;
 }
 
 
 boost::uint16_t 
-SpaListener::HostRecord::getSrcPort() const
+SpaListener::HostRecordBase::getSrcPort() const
 {
     return sport;
 }
 
+
 boost::uint32_t
-SpaListener::HostRecord::getDstAddr() const
+SpaListener::HostRecordBase::getDstAddr() const
 {
     return daddr;
 }
 
+
 boost::uint16_t 
-SpaListener::HostRecord::getDstPort() const
+SpaListener::HostRecordBase::getDstPort() const
 {
     return dport;
 }
 
 
 boost::uint16_t 
-SpaListener::HostRecord::getTargetPort() const
+SpaListener::HostRecordBase::getTargetPort() const
 {
     return targetPort;
 }
 
-const SpaRequest&
-SpaListener::HostRecord::getRequest() const
+
+template <typename ReqType, typename RespType>
+const ReqType&
+SpaListener::HostRecord<ReqType, RespType>::getRequest() const
 {
     return request;
 }
 
-const boost::array<boost::uint8_t, MAC_BYTES>&
-SpaListener::HostRecord::getResponse() const
+template <typename ReqType, typename RespType>
+const RespType&
+SpaListener::HostRecord<ReqType, RespType>::getResponse() const
 {
     return response;
 }
@@ -291,7 +308,7 @@ SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
 /* 
 Creates an AddressPair from a HostRecord
 */
-SpaListener::AddressPair::AddressPair(const SpaListener::HostRecord& host)
+SpaListener::AddressPair::AddressPair(const SpaListener::HostRecordBase& host)
 : saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
 {}
 
@@ -363,7 +380,7 @@ Looks up a host in the host hash table
 If an entry exists in the hash table matching *pkt, return it.  Otherwise, 
 throw an UnknownHostException.
 */
-SpaListener::HostRecord& 
+SpaListener::HostRecord<SpaRequest, SpaListener::SpaResponse>& 
 SpaListener::getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException))
 {
     HostTable::iterator iter = hostTable.find(AddressPair(pkt));
@@ -379,7 +396,7 @@ If the response in *pkt is the one expected for host, return true.  Otherwise,
 return false.
 */
 bool 
-SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
+SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaRequest, SpaResponse>& host)
 {
     size_t payload_size;
     const boost::uint8_t* contents = pkt->getUdpPayload(payload_size);
@@ -402,7 +419,7 @@ Sends a message to ipt_REMAP asking it to redirect the next connection to
 the random target port to the requested destination port
 */
 void 
-SpaListener::openPort(const HostRecord& host) THROW((IOException))
+SpaListener::openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IOException))
 {
     struct ipt_remap remap;
     int ret;
@@ -439,7 +456,7 @@ SpaListener::openPort(const HostRecord& host) THROW((IOException))
 Remove an entry from the host hash table
 */
 void 
-SpaListener::deleteState(const HostRecord& host)
+SpaListener::deleteState(const HostRecord<SpaRequest, SpaResponse>& host)
 {
     hostTable.erase(AddressPair(host));
 }
@@ -545,7 +562,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
         throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
 
     // create a record for this host
-    HostRecord hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
+    HostRecord<SpaRequest, SpaResponse> hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
     AddressPair haddr(hrec);
     hostTable.insert(std::make_pair(haddr, hrec));
     hostTableGC.schedule(haddr, TIMEOUT_SECS, TIMEOUT_USECS);
@@ -569,7 +586,7 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
 
     try
     {
-        HostRecord& host = getRecord(packet);
+        HostRecord<SpaRequest, SpaResponse>& host = getRecord(packet);
 
         // we have already issued a challenge to this host;
         // check if this is a valid response
@@ -757,52 +774,6 @@ SpaListener::~SpaListener()
 
 
 /* 
-Entry point for SpaListener
-Designed this way for compatibility with boost::thread
-*/
-void 
-SpaListener::operator() ()
-{
-    try
-    {
-        // loop forever, processing packets
-        // send the process a SIGINT to stop 
-        while (1)
-        {
-            try
-            {
-                sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
-                NFQ::NfqPacket* packet = sock.recvPacket(true);
-
-                // set the verdict first, so that we don't keep the kernel waiting
-                packet->setVerdict(NFQ::NfqPacket::DROP);
-                sock.sendResponse(packet);
-/*#ifdef DEBUG
-                printPacketInfo(packet, std::cout);
-#endif*/
-                // handle the packet
-                handlePacket(packet);
-
-                delete packet;
-            }
-            catch (const NFQ::NfqException& e)
-            {
-                LibWheel::logmsg(LibWheel::logmsg_err, "Error processing packet: %s", e.what());
-            }
-        }
-    }
-    catch (const LibWheel::Interrupt& e) // thrown when SIGINT is caught
-    {
-        LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
-    }
-    catch (const CryptoException& e)
-    {
-        LibWheel::logmsg(LibWheel::logmsg_crit, "Error in libgcrypt: %s", e.what());
-    }
-}
-
-
-/* 
 Prints version info
 */
 void print_version()
@@ -905,6 +876,7 @@ main(int argc, char** argv)
     bool verbose = false;
     uid_t nobody_uid;
     gid_t nobody_gid;
+    int ret = EXIT_SUCCESS;
     
     // initialize the logmsg facility (spc_sanitize_* needs it)
     LibWheel::logmsg.open(LibWheel::logmsg_stderr, 0, argv[0]);
@@ -982,22 +954,21 @@ main(int argc, char** argv)
         catch (const NFQ::NfqException& e)
         {
             LibWheel::logmsg(LibWheel::logmsg_crit, "Error in NFQUEUE: %s", e.what());
+            ret = EXIT_FAILURE;
         }
     }
     catch (const Rknockd::ConfigException& e)
     {
         std::cerr << "Error loading configuration file " << config_file << ": " << e.what() << std::endl;
-        LibWheel::logmsg.close();
-        return EXIT_FAILURE;
+        ret = EXIT_FAILURE;
     }
     catch (const Rknockd::IOException& e)
     {
         LibWheel::logmsg(LibWheel::logmsg_err, "I/O error: %s", e.what());
-        LibWheel::logmsg.close();
-        return EXIT_FAILURE;
+        ret = EXIT_FAILURE;
     }
         
     LibWheel::logmsg.close();
-    return EXIT_SUCCESS;
+    return ret;
 }
 

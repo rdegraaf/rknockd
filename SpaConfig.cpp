@@ -7,20 +7,6 @@
 namespace Rknockd
 {
 
-SpaRequest::SpaRequest(const xmlpp::Element* elmt, const SpaConfig& config) THROW((ConfigException))
-: Request(), requestStr()
-{
-    // this can't be called by the base class constructor, since it doesn't know 
-    // what subclass it is
-    parseRequest(elmt, &config);
-}
-
-const std::vector<boost::uint8_t>&
-SpaRequest::getRequestString() const
-{
-    return requestStr;
-}
-
 static char
 bintohex(boost::uint8_t c)
 {
@@ -72,8 +58,8 @@ hextobin(char c)
     }
 }
 
-void
-SpaRequest::printRequest(std::ostream& os) const
+void 
+SpaRequestPrinter::operator() (std::ostream& os, const SpaRequestString& requestStr) const
 {
     os << "request:  0x";
     
@@ -82,14 +68,13 @@ SpaRequest::printRequest(std::ostream& os) const
         os << bintohex((*i)>>4) << bintohex((*i)&0xf);
     }
     os << std::endl;
-
-    // print the basics
-    Request::printRequest(os);
 }
 
+template<typename A, typename RequestPrinterType, typename C, typename D> const RequestPrinterType Request<A, RequestPrinterType, C, D>::requestPrinter = RequestPrinterType();
+template<typename A, typename B, typename RequestParserType, typename D> const RequestParserType Request<A, B, RequestParserType, D>::requestParser = RequestParserType();
 
-void 
-SpaRequest::getRequestString(const std::string& str, const Config*) THROW((ConfigException))
+void
+SpaRequestParser::operator() (SpaRequestString& requestStr, const std::string& str, const Config*) const THROW((ConfigException))
 {
     boost::uint8_t high;
     boost::uint8_t low;

@@ -6,6 +6,9 @@
 #include <fcntl.h>
 #include "Config.hpp"
 #include "Listener.hpp"
+#include "NFQ.hpp"
+#include "Signals.hpp"
+#include "Logmsg.hpp"
 #include "common.h"
 
 #include <iostream>
@@ -47,6 +50,52 @@ Listener::~Listener()
     {}
 }
 
+
+/* 
+Entry point for SpaListener
+*/
+void 
+Listener::operator() ()
+{
+    try
+    {
+        // loop forever, processing packets
+        // send the process a SIGINT to stop 
+        while (1)
+        {
+            try
+            {
+                sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
+                NFQ::NfqPacket* packet = sock.recvPacket(true);
+
+                // set the verdict first, so that we don't keep the kernel waiting
+                packet->setVerdict(NFQ::NfqPacket::DROP);
+                sock.sendResponse(packet);
+/*#ifdef DEBUG
+                printPacketInfo(packet, std::cout);
+#endif*/
+                // handle the packet
+                handlePacket(packet);
+
+                delete packet;
+            }
+            catch (const NFQ::NfqException& e)
+            {
+                LibWheel::logmsg(LibWheel::logmsg_err, "Error processing packet: %s", e.what());
+            }
+        }
+    }
+    catch (const LibWheel::Interrupt& e) // thrown when SIGINT is caught
+    {
+        LibWheel::logmsg(LibWheel::logmsg_notice, "SIGINT caught; exiting normally\n");
+    }
+    catch (const CryptoException& e)
+    {
+        LibWheel::logmsg(LibWheel::logmsg_crit, "Error in libgcrypt: %s", e.what());
+    }
+}
+
+
 void
 Listener::close() THROW((NFQ::NfqException, IOException))
 {
@@ -61,8 +110,9 @@ Listener::close() THROW((NFQ::NfqException, IOException))
     sock.close();
 }
 
+
 void 
-Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out) const
+Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out)
 {
     const NFQ::NfqTcpPacket* tcp_packet = dynamic_cast<const NFQ::NfqTcpPacket*>(packet);
     const NFQ::NfqUdpPacket* udp_packet = dynamic_cast<const NFQ::NfqUdpPacket*>(packet);

@@ -20,7 +20,7 @@
             bool isopen;
         };
 #ifndef LOGMSG_CPP
-        Logmsg& logmsg = Logmsg::logmsg;
+        static Logmsg& logmsg = Logmsg::logmsg;
 #endif
     
     } // namespace LibWheel
