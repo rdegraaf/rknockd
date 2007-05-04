@@ -12,6 +12,9 @@
     
     namespace Rknockd
     {
+        char bintohex(boost::uint8_t c);
+        boost::uint8_t hextobin(char c);
+
         class ConfigException : public std::runtime_error
         {
           public:
@@ -44,7 +47,7 @@
         class Config
         {
           public:
-            Config(std::string& name);
+            Config(const std::string& filename);
             virtual ~Config();
             const std::string& getFile() const;
             const std::string& getRandomDevice() const;
@@ -105,39 +108,8 @@
             static const RequestParserType requestParser;
         };
         
+    } // namespace Rknockd
 
-        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
-        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::Request(const xmlpp::Element* elmt, const ConfigType& config) THROW((ConfigException))
-        : RequestBase(), requestStr()
-        {
-            // this can't be called by the base class constructor, since it doesn't know 
-            // what subclass it is
-            parseRequest(elmt, &config);
-        }
-
-        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
-        const RequestStrType&
-        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::getRequestString() const
-        {
-            return requestStr;
-        }
-
-        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
-        void
-        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::printRequest(std::ostream& os) const
-        {
-            requestPrinter(os, requestStr);
-
-            // print the basics
-            Request::printRequest(os);
-        }
-
-        template <typename RequestStrType, typename RequestPrinterType, typename RequestParserType, typename ConfigType>
-        void 
-        Request<RequestStrType, RequestPrinterType, RequestParserType, ConfigType>::parseRequestString(const std::string& str, const Config* cfg) THROW((ConfigException))
-        {
-            requestParser(requestStr, str, cfg);
-        }
-    }
+#include "Config_impl.cpp"
 
 #endif // RKNOCKD_CONFIG_HPP

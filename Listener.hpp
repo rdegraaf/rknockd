@@ -1,11 +1,15 @@
 #ifndef RKNOCKD_LISTENER_HPP
     #define RKNOCKD_LISTENER_HPP
 
-    #include <iostream>
     #include <stdexcept>
     #include <string>
+    #include <queue>
+    #include <tr1/unordered_map>
+    #include <boost/array.hpp>
     #include "Config.hpp"
     #include "NFQ.hpp"
+    #include "Logmsg.hpp"
+    #include "time.h"
     #include "common.h"
 
     namespace Rknockd
@@ -19,7 +23,7 @@
         class CryptoException : public std::runtime_error
         {
           public:
-            CryptoException(const std::string& s) : runtime_error(s) {}
+            CryptoException(const std::string& s);
         };
 
         class Listener
@@ -37,9 +41,90 @@
             int randomFD;
             int remapFD;
             bool verbose;
+            
             static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);
+            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str);
+            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const boost::uint8_t* str, size_t strlen);
+            static void encryptPort(boost::uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], boost::uint16_t port, const boost::uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException));
+            static void computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr);
+
+            class HostRecordBase
+            {
+              protected:
+                boost::uint32_t saddr;
+                boost::uint32_t daddr;
+                boost::uint16_t sport;
+                boost::uint16_t dport;
+                boost::uint16_t targetPort;
+              public:
+                HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException));
+                virtual ~HostRecordBase();
+                boost::uint32_t getSrcAddr() const;
+                boost::uint16_t getSrcPort() const;
+                boost::uint32_t getDstAddr() const;
+                boost::uint16_t getDstPort() const;
+                boost::uint16_t getTargetPort() const;
+            };
+
+            template <typename ReqType, typename RespType>
+            class HostRecord : public HostRecordBase
+            {
+                const ReqType& request;
+                RespType response;
+              public:
+                typedef ReqType RequestType;
+                typedef RespType ResponseType;
+                HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
+                const ReqType& getRequest() const;
+                const RespType& getResponse() const;
+            };
+
+            struct AddressPair
+            {
+                boost::uint32_t saddr;
+                boost::uint32_t daddr;
+                boost::uint16_t sport;
+                boost::uint16_t dport;
+                AddressPair(const NFQ::NfqUdpPacket* pkt);
+                AddressPair(const Listener::HostRecordBase& host);
+            };
+
+            struct AddressPairHash
+            {
+                std::tr1::hash<boost::uint32_t> uhash;
+                std::tr1::hash<boost::uint16_t> shash;
+                std::size_t operator()(const Listener::AddressPair& a) const;
+            };
+            struct AddressPairEqual
+            {
+                bool operator() (const AddressPair& a, const AddressPair& b) const;
+            };
+            
+            template <typename HostTableType>
+            class HostTableGC
+            {
+              public:
+                HostTableGC(HostTableType& t, bool verbose_logging);
+                void schedule(AddressPair& addr, long secs, long usecs);
+                void operator()();
+              private:
+                HostTableType& table;
+                std::queue<std::pair<struct timeval, AddressPair> > gcQueue;
+                bool verbose;
+            };
+    
+          private:
+            class ListenerConstructor
+            {
+              public:
+                ListenerConstructor();
+            };
+        
+            static ListenerConstructor _listenerConstructor;
         };
 
-    }
+    } // namespace Rknockd
+
+#include "Listener_impl.cpp"
 
 #endif /* RKNOCKD_LISTENER_HPP */

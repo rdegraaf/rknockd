@@ -11,7 +11,7 @@ spaclient_LDFLAGS=
 spaclient_LIBS=-lcrypto
 
 spaserver_OBJS=spamain.o Config.o SpaConfig.o NFQ.o Listener.o Signals.o \
-	       spc_sanitize.o logmsg.o Logmsg.o drop_priv.o
+	       PKConfig.o spc_sanitize.o logmsg.o Logmsg.o drop_priv.o
 spaserver_CXXFLAGS=-IREMAP/linux-2.6.20.7/include \
 		`libgcrypt-config --cflags` \
 		`pkg-config --cflags libxml++-2.6`

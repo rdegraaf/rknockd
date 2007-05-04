@@ -17,6 +17,8 @@
     
     #define XQUOTE(x) #x
     #define QUOTE(x) XQUOTE(x)
+    
+    #define BITS_TO_BYTES(x) (((x)+7) >> 3)
 
     #ifdef __cplusplus
     namespace Rknockd
@@ -29,7 +31,7 @@
         #define DEFAULT_BASE_PORT           1024
         #define DEFAULT_MAX_KNOCKS          10
         #define DEFAULT_BITS_PER_KNOCK      8
-        #define DEFAULT_CHALLENGE_BYTES     10
+        #define DEFAULT_CHALLENGE_BITS      80
         #define DEFAULT_RANDOM_DEVICE       "/dev/random"
         #define DEFAULT_TTL                 10
         #define MIN_KEY_SIZE                4
@@ -37,23 +39,23 @@
         #define MIN_TTL                     1
         #define MAX_TTL                     60
 
-        #define MIN_CHALLENGE_BYTES         5
-        #define MAX_CHALLENGE_BYTES         128
-        #define MIN_REQUEST_BYTES           5
-        #define MAX_REQUEST_BYTES           128
+        #define MIN_CHALLENGE_BITS          40
+        #define MAX_CHALLENGE_BITS          1024
+        #define MIN_REQUEST_BITS            40
+        #define MAX_REQUEST_BITS            1024
 
-        #define HASH_BYTES 20
-        #define MAC_BYTES 20
-        #define CIPHER_BLOCK_BYTES 16
-        #define CIPHER_KEY_BYTES 16
-        #define PORT_MESSAGE_PAD_BYTES 7
-        #define PORT_MESSAGE_HASH_BYTES 7
+        #define HASH_BITS                   160
+        #define MAC_BITS                    160
+        #define CIPHER_BLOCK_BITS           128
+        #define CIPHER_KEY_BITS             128
+        #define PORT_MESSAGE_PAD_BITS       56
+        #define PORT_MESSAGE_HASH_BITS      56
 
         struct PortMessage
         {
             uint16_t port;
-            uint8_t pad[PORT_MESSAGE_PAD_BYTES];
-            uint8_t hash[PORT_MESSAGE_HASH_BYTES];
+            uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)];
+            uint8_t hash[BITS_TO_BYTES(PORT_MESSAGE_HASH_BITS)];
         } __attribute__((__packed__));
 
         struct SpaRequestHeader
@@ -68,7 +70,7 @@
         {
             uint16_t nonceBytes;
             uint16_t _pad;
-            uint8_t portMessage[CIPHER_BLOCK_BYTES];
+            uint8_t portMessage[BITS_TO_BYTES(CIPHER_BLOCK_BITS)];
             /* the "struct hack" is not allowed in C++ 
                boost::uint8_t challenge[]; */
         } __attribute__((__packed__));

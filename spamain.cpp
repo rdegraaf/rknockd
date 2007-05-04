@@ -10,6 +10,7 @@ then these will need to be converted to synchronous signal handlers.
 
 // FIXME: drop root privileges after start-up
 // FIXME: do something intelligent with memory used to hold passwords
+// FIXME: implement the "address" config attribute
 
 #define PROGNAME spaserver
 #define VERSION 0.1
@@ -20,7 +21,6 @@ then these will need to be converted to synchronous signal handlers.
 #include <sstream>
 #include <map>
 #include <vector>
-#include <queue>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -44,16 +44,22 @@ then these will need to be converted to synchronous signal handlers.
 #include "NFQ.hpp"
 #include "Listener.hpp"
 #include "SpaConfig.hpp"
+#include "PKConfig.hpp"
 #include "Trie.hpp"
 #include "Logmsg.hpp"
 #include "Signals.hpp"
 #include "spc_sanitize.h"
-#include "time.h"
 #include "drop_priv.h"
 
 
 namespace Rknockd
 {
+
+enum Mode
+{
+    MODE_SPA,
+    MODE_PK
+};
 
 std::string 
 ipv4_to_string(boost::uint32_t a)
@@ -96,101 +102,15 @@ class SpaListener : public Listener
         SocketException(const std::string& s) : runtime_error(s) {}
     };
 
-    class SpaListenerConstructor
-    {
-      public:
-        SpaListenerConstructor();
-    };
-    
-    class HostRecordBase
-    {
-      protected:
-        boost::uint32_t saddr;
-        boost::uint32_t daddr;
-        boost::uint16_t sport;
-        boost::uint16_t dport;
-        boost::uint16_t targetPort;
-        //boost::array<boost::uint8_t, MAC_BYTES> response;
-      public:
-        HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException));
-        virtual ~HostRecordBase();
-        boost::uint32_t getSrcAddr() const;
-        boost::uint16_t getSrcPort() const;
-        boost::uint32_t getDstAddr() const;
-        boost::uint16_t getDstPort() const;
-        boost::uint16_t getTargetPort() const;
-        //const boost::array<boost::uint8_t, MAC_BYTES>& getResponse() const;
-    };
-    
-    template <typename ReqType, typename RespType>
-    class HostRecord : public HostRecordBase
-    {
-        const ReqType& request;
-        RespType response;
-      public:
-        typedef ReqType RequestType;
-        typedef RespType ResponseType;
-        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
-        const ReqType& getRequest() const;
-        const RespType& getResponse() const;
-    };
-    
-    struct AddressPair
-    {
-        boost::uint32_t saddr;
-        boost::uint32_t daddr;
-        boost::uint16_t sport;
-        boost::uint16_t dport;
-        AddressPair(const NFQ::NfqUdpPacket* pkt);
-        AddressPair(const SpaListener::HostRecordBase& host);
-    };
-    
-    struct AddressPairHash
-    {
-        std::tr1::hash<boost::uint32_t> uhash;
-        std::tr1::hash<boost::uint16_t> shash;
-        std::size_t operator()(const Rknockd::SpaListener::AddressPair& a) const
-        {
-            return uhash(a.saddr) ^ uhash(a.daddr)^ shash(a.sport) ^ (shash(a.dport)<<16);
-        }
-    };
-    struct AddressPairEqual
-    {
-        bool operator() (const AddressPair& a, const AddressPair& b) const 
-        {
-            return ((a.saddr==b.saddr) && (a.daddr==b.daddr) && (a.sport==b.sport) && (a.dport==b.dport));
-        }
-    };
-
-    union uint32_u
-    {
-        boost::uint32_t u32;
-        boost::uint8_t u8[sizeof(boost::uint32_t)];
-    };
-
-    typedef boost::array<boost::uint8_t, MAC_BYTES> SpaResponse;
+    typedef boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> SpaResponse;
     typedef std::tr1::unordered_map<AddressPair, HostRecord<SpaRequest, SpaResponse>, AddressPairHash, AddressPairEqual> HostTable;
     typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
 
-    class HostTableGC
-    {
-      public:
-        HostTableGC(HostTable& t, bool verbose_logging);
-        void schedule(AddressPair& addr, long secs, long usecs);
-        void operator()();
-      private:
-        HostTable& table;
-        std::queue<std::pair<struct timeval, AddressPair> > gcQueue;
-        bool verbose;
-    };
-    
     const SpaConfig& config;
     HostTable hostTable;
     RequestTable requestTable;
-    HostTableGC hostTableGC;
+    HostTableGC<HostTable> hostTableGC;
 
-    static SpaListenerConstructor _classconstructor;
-    
     HostRecord<SpaRequest, SpaResponse>& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
     bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaRequest, SpaResponse>& host);
     void openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IOException));
@@ -199,180 +119,10 @@ class SpaListener : public Listener
     void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
     void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
 
-    static void getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str);
-    static void getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, size_t strlen);
-    static void encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t port, const boost::uint8_t pad[PORT_MESSAGE_PAD_BYTES], const std::string& keystr) THROW((CryptoException));
-    static void computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr);
-
   public:
     SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));
     ~SpaListener();
 };
-
-
-// static data members
-SpaListener::SpaListenerConstructor SpaListener::_classconstructor;
-
-
-SpaListener::SpaListenerConstructor::SpaListenerConstructor()    
-{
-    // initialize gcrypt
-    if (!gcry_check_version (GCRYPT_VERSION))
-    {
-        std::cerr << "version mismatch" << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-    if (geteuid() == 0) // use secure memory if we're running as root
-        gcry_control(GCRYCTL_INIT_SECMEM, 16384, 0);
-    else
-        gcry_control(GCRYCTL_DISABLE_SECMEM, 0); 
-    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
-}
-
-
-SpaListener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException))
-: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target)
-{}
-
-
-template <typename ReqType, typename RespType>
-SpaListener::HostRecord<ReqType, RespType>::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
-: HostRecordBase(pkt, target), request(req), response()
-{
-    SpaListener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
-}
-
-
-SpaListener::HostRecordBase::~HostRecordBase()
-{}
-
-
-boost::uint32_t 
-SpaListener::HostRecordBase::getSrcAddr() const
-{
-    return saddr;
-}
-
-
-boost::uint16_t 
-SpaListener::HostRecordBase::getSrcPort() const
-{
-    return sport;
-}
-
-
-boost::uint32_t
-SpaListener::HostRecordBase::getDstAddr() const
-{
-    return daddr;
-}
-
-
-boost::uint16_t 
-SpaListener::HostRecordBase::getDstPort() const
-{
-    return dport;
-}
-
-
-boost::uint16_t 
-SpaListener::HostRecordBase::getTargetPort() const
-{
-    return targetPort;
-}
-
-
-template <typename ReqType, typename RespType>
-const ReqType&
-SpaListener::HostRecord<ReqType, RespType>::getRequest() const
-{
-    return request;
-}
-
-template <typename ReqType, typename RespType>
-const RespType&
-SpaListener::HostRecord<ReqType, RespType>::getResponse() const
-{
-    return response;
-}
-
-
-/* 
-Creates an AddressPair from a NfqUdpPacket 
-*/
-SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
-: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
-{}
-
-
-/* 
-Creates an AddressPair from a HostRecord
-*/
-SpaListener::AddressPair::AddressPair(const SpaListener::HostRecordBase& host)
-: saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
-{}
-
-
-SpaListener::HostTableGC::HostTableGC(HostTable& table, bool verbose_logging)
-: table(table), gcQueue(), verbose(verbose_logging)
-{}
-
-void 
-SpaListener::HostTableGC::schedule(AddressPair& addr, long secs, long usecs)
-{
-    struct timeval time;
-    struct itimerval itime;
-
-    // calculate the GC execution time    
-    gettimeofday(&time, NULL);
-    time.tv_usec += usecs;
-    time.tv_sec += secs;
-    if (time.tv_usec >= 1000000)
-    {
-        time.tv_sec += (time.tv_usec / 1000000);
-        time.tv_usec %= 1000000;
-    }
-    
-    // schedule the GC
-    // it's safe to schedule before pushing to the queue, because the timer
-    // interrupt is handled synchronously
-    if (gcQueue.size() == 0)
-    {
-        itime.it_interval.tv_sec = 0;
-        itime.it_interval.tv_usec = 0;
-        itime.it_value.tv_sec = secs;
-        itime.it_value.tv_usec = usecs;
-        setitimer(ITIMER_REAL, &itime, NULL);
-    }
-    gcQueue.push(std::make_pair(time, addr));
-}
-
-void
-SpaListener::HostTableGC::operator()()
-{
-    struct timeval curtime;
-
-    gettimeofday(&curtime, NULL);
-    
-    // delete old junk
-    while (!gcQueue.empty() && (LibWheel::cmptime(&gcQueue.front().first, &curtime) < 0))
-    {
-        if (verbose && (table.find(gcQueue.front().second) != table.end()))
-            LibWheel::logmsg(LibWheel::logmsg_info, "GC: deleting stale entry");
-        table.erase(gcQueue.front().second);
-        gcQueue.pop();
-    }
-    
-    // schedule the next GC run
-    if (!gcQueue.empty())
-    {
-        struct itimerval itime;
-        itime.it_interval.tv_sec = 0;
-        itime.it_interval.tv_usec = 0;
-        LibWheel::subtime(&itime.it_value, &gcQueue.front().first, &curtime);
-        setitimer(ITIMER_REAL, &itime, NULL);
-    }
-}
 
 
 /* 
@@ -402,7 +152,7 @@ SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaReq
     const boost::uint8_t* contents = pkt->getUdpPayload(payload_size);
 
     // make sure that we have a valid message
-    if (payload_size != MAC_BYTES)
+    if (payload_size != BITS_TO_BYTES(MAC_BITS))
         return false;
 
     // check if we received the expected response
@@ -480,7 +230,7 @@ SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestExcepti
     // make sure we have a valid message
     if (payload_size < sizeof(SpaRequestHeader))
         throw BadRequestException("Message too small");
-    else if ((request_bytes < MIN_REQUEST_BYTES) || (request_bytes > MAX_REQUEST_BYTES))
+    else if ((request_bytes < BITS_TO_BYTES(MIN_REQUEST_BITS)) || (request_bytes > BITS_TO_BYTES(MAX_REQUEST_BITS)))
         throw BadRequestException("Invalid request size");
     else if (payload_size > sizeof(SpaRequestHeader)+request_bytes)
         throw BadRequestException("Message too large");
@@ -513,7 +263,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
     unsigned challenge_len = sizeof(SpaChallengeHeader) + config.getChallengeBytes();
     boost::uint8_t* challenge;
     SpaChallengeHeader* header;
-    unsigned rand_len = config.getChallengeBytes() + PORT_MESSAGE_PAD_BYTES + 2;
+    unsigned rand_len = config.getChallengeBytes() + BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS) + 2;
     boost::uint8_t* rand_bytes;
     boost::uint16_t dport;
     int ret;
@@ -634,118 +384,6 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
 
 
 /* 
-Compute the SHA1 hash of a string
-*/
-void 
-SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const std::string& str)
-{
-    gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str.c_str(), str.length());    
-}
-
-
-/* Compute the SHA1 hash of a buffer
-*/
-void 
-SpaListener::getHash(boost::uint8_t buf[HASH_BYTES], const boost::uint8_t* str, size_t strlen)
-{
-    gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str, strlen);    
-}
-
-
-/* 
-Build an struct PortMessage and encrypt it with AES-128-ECB
-Throws: CryptoException - if there is an error in the crypto library
-*/
-void 
-SpaListener::encryptPort(boost::uint8_t buf[CIPHER_BLOCK_BYTES], boost::uint16_t port, const boost::uint8_t pad[PORT_MESSAGE_PAD_BYTES], const std::string& keystr) THROW((CryptoException))
-{
-    boost::uint8_t hash[HASH_BYTES];
-    struct PortMessage mess;
-    gcry_error_t err;
-    gcry_cipher_hd_t handle;
-
-    assert(sizeof(PortMessage) == CIPHER_BLOCK_BYTES);
-    assert(HASH_BYTES >= PORT_MESSAGE_HASH_BYTES);
-    assert(HASH_BYTES >= CIPHER_KEY_BYTES);
-
-    // generate the plaintext message
-    mess.port = htons(port);
-    std::memcpy(&mess.pad, pad, PORT_MESSAGE_PAD_BYTES);
-    getHash(hash, reinterpret_cast<boost::uint8_t*>(&mess), offsetof(PortMessage, hash));
-    std::memcpy(&mess.hash, hash, PORT_MESSAGE_HASH_BYTES);
-
-    // generate the encryption key
-    getHash(hash, keystr);
-
-    // encrypt the message
-    err = gcry_cipher_open(&handle, GCRY_CIPHER_AES128, GCRY_CIPHER_MODE_ECB, 0);
-    if (err)
-        throw CryptoException(std::string("Error initializing cryptosystem: ") + gcry_strerror(err));
-    err = gcry_cipher_setkey(handle, hash, CIPHER_KEY_BYTES);
-    if (err)
-        throw CryptoException(std::string("Error setting key: ") + gcry_strerror(err));
-    err = gcry_cipher_encrypt(handle, buf, CIPHER_BLOCK_BYTES, &mess, CIPHER_BLOCK_BYTES);
-    if (err)
-        throw CryptoException(std::string("Error encrypting: ") + gcry_strerror(err));
-    gcry_cipher_close(handle);
-
-    // clean up
-    memset(&mess, 0, sizeof(mess));
-    memset(hash, 0, sizeof(hash));
-}    
-
-
-/* 
-Compute a MAC on a challenge
-Throws: CryptoException - if there is an error in the crypto library
-*/
-void 
-SpaListener::computeMAC(boost::array<boost::uint8_t, MAC_BYTES>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr)
-{
-    boost::uint8_t key[HASH_BYTES];
-    boost::uint8_t* msg;
-    size_t msglen;
-    uint32_u caddr;
-    uint32_u saddr;
-    gcry_md_hd_t handle;
-    gcry_error_t err;
-
-    assert(challenge != NULL);
-
-    // build the message
-    msglen = clen + sizeof(boost::uint32_t) + sizeof(boost::uint32_t) + request.size();
-    msg = new boost::uint8_t[msglen];
-    std::memcpy(msg, challenge, clen);
-    if (ignore_client_addr)
-        caddr.u32 = 0;
-    else
-        caddr.u32 = htonl(client_addr);
-    std::memcpy(msg+clen, caddr.u8, sizeof(boost::uint32_t));
-    saddr.u32 = htonl(serv_addr);
-    std::memcpy(msg+clen+sizeof(boost::uint32_t), saddr.u8, sizeof(boost::uint32_t));
-    std::copy(request.begin(), request.end(), msg+clen+2*sizeof(boost::uint32_t));
-
-    // generate the MAC key
-    getHash(key, keystr);
-
-    // calculate the MAC
-    err = gcry_md_open(&handle, GCRY_MD_SHA1, GCRY_MD_FLAG_HMAC);
-    if (err)
-        throw CryptoException(std::string("Error initializing hash algorithm: ") + gcry_strerror(err));
-    err = gcry_md_setkey(handle, key, HASH_BYTES);
-    if (err)
-        throw CryptoException(std::string("Error setting HMAC key: ") + gcry_strerror(err));
-    gcry_md_write(handle, msg, msglen);
-    gcry_md_final(handle);
-    std::memcpy(buf.c_array(), gcry_md_read(handle, 0), MAC_BYTES);
-    gcry_md_close(handle);
-
-    delete[] msg;
-    memset(key, 0, sizeof(key));
-}
-
-
-/* 
 Constructor for SpaListener
 Initialize, program the request matcher trie with all request strings
 */
@@ -789,8 +427,10 @@ Print a help message
 */
 void print_help()
 {
-    std::cout << "Usage: "QUOTE(PROGNAME)" [-c <config file>] [-D] [-V] [-h] [-v]\n"
+    std::cout << "Usage: "QUOTE(PROGNAME)" [-c <config file>] [-s|-p] [-D] [-V] [-h] [-v]\n"
               << "where -c <config file> - use the specified configuration file\n"
+              << "      -s - use single packet authorization (default)\n"
+              << "      -p - use port knocking\n"
               << "      -D - run the program as a daemon\n"
               << "      -V - enable verbose logging\n"
               << "      -h - print this message\n"
@@ -799,11 +439,13 @@ void print_help()
 }
 
 
-void parse_args(int argc, char** argv, std::string& config_file, bool& daemon, bool& verbose)
+void parse_args(int argc, char** argv, std::string& config_file, Mode& mode, bool& daemon, bool& verbose)
 {
-    char* short_options = "c:DhvV";
+    char* short_options = "c:spDhvV";
     static struct option long_options[] = {
         {"config", 1, 0, 'c'},
+        {"spa", 0, 0, 's'},
+        {"port-knock", 0, 0, 'p'},
         {"daemon", 0, 0, 'D'},
         {"verbose", 0, 0, 'V'},
         {"help", 0, 0, 'h'},
@@ -819,6 +461,12 @@ void parse_args(int argc, char** argv, std::string& config_file, bool& daemon, b
         {
             case 'c':
                 config_file = optarg;
+                break;
+            case 's':
+                mode = MODE_SPA;
+                break;
+            case 'p':
+                mode = MODE_PK;
                 break;
             case 'D':
                 daemon = true;
@@ -859,6 +507,36 @@ void parse_args(int argc, char** argv, std::string& config_file, bool& daemon, b
     }
 }
 
+inline Config* 
+get_config(const Mode mode, const std::string& config_file) THROW((ConfigException, std::runtime_error))
+{
+    switch (mode)
+    {
+      case MODE_SPA:
+        return new SpaConfig(config_file);
+      case MODE_PK:
+        return new PKConfig(config_file);
+      default:
+        throw std::runtime_error("Invalid mode");
+    }
+}
+
+inline Listener*
+get_listener(const Mode, const Config* config, const bool verbose)
+{
+    const SpaConfig* spaConfig;
+    const PKConfig* pkConfig;
+    
+    assert(config != NULL);
+
+    if ((spaConfig = dynamic_cast<const SpaConfig*>(config)) != NULL)
+        return new SpaListener(*spaConfig, verbose);
+    /*else if ((pkConfig = dynamic_cast<const PKConfig*>(config)) != NULL)
+        return new PKListener(*pkConfig, verbose);*/
+    else
+        throw std::runtime_error("Invalid mode");
+}
+
 void sigint_handler()
 {
     throw LibWheel::Interrupt();
@@ -877,6 +555,9 @@ main(int argc, char** argv)
     uid_t nobody_uid;
     gid_t nobody_gid;
     int ret = EXIT_SUCCESS;
+    Rknockd::Mode mode = Rknockd::MODE_SPA;
+    Rknockd::Config* config = NULL;
+    Rknockd::Listener* listener = NULL;
     
     // initialize the logmsg facility (spc_sanitize_* needs it)
     LibWheel::logmsg.open(LibWheel::logmsg_stderr, 0, argv[0]);
@@ -886,7 +567,7 @@ main(int argc, char** argv)
     spc_sanitize_files();
     
     // parse command-line arguments
-    Rknockd::parse_args(argc, argv, config_file, make_daemon, verbose);
+    Rknockd::parse_args(argc, argv, config_file, mode, make_daemon, verbose);
     
 #ifdef DEBUG
     verbose = true;
@@ -896,15 +577,19 @@ main(int argc, char** argv)
     try
     {
         // load configuration
-        Rknockd::SpaConfig config(config_file);
-/*#ifdef DEBUG
-        config.printConfig(std::cout);
-#endif*/
+        //Rknockd::SpaConfig config(config_file);
+        config = get_config(mode, config_file);
+#ifdef DEBUG
+        config->printConfig(std::cout);
+#endif
+
+std::exit(1);
 
         // make sure that we're running as root
         if (geteuid() != 0)
         {
             std::cerr << "This program requires superuser privileges" << std::endl;
+            delete config;
             LibWheel::logmsg.close();
             return EXIT_FAILURE;
         }
@@ -914,6 +599,7 @@ main(int argc, char** argv)
         if (nobody_uid == (uid_t)-1)
         {
             std::cerr << "Error: user \"nobody\" does not exist" << std::endl;
+            delete config;
             LibWheel::logmsg.close();
             return EXIT_FAILURE;
         }
@@ -921,6 +607,7 @@ main(int argc, char** argv)
         if (nobody_gid == (gid_t)-1)
         {
             std::cerr << "Error: group \"nobody\" does not exist" << std::endl;
+            delete config;
             LibWheel::logmsg.close();
             return EXIT_FAILURE;
         }
@@ -929,7 +616,8 @@ main(int argc, char** argv)
         
         try
         {
-            Rknockd::SpaListener listener(config, verbose);
+            //Rknockd::SpaListener listener(config, verbose);
+            listener = get_listener(mode, config, verbose);
         
             // we've finished initializing; time to summon Beelzebub
             if (make_daemon)
@@ -947,9 +635,9 @@ main(int argc, char** argv)
             //drop_priv(nobody_uid, nobody_gid);
 
             // run the listener
-            listener();
+            (*listener)();
             
-            listener.close();
+            listener->close();
         }
         catch (const NFQ::NfqException& e)
         {
@@ -968,6 +656,8 @@ main(int argc, char** argv)
         ret = EXIT_FAILURE;
     }
         
+    delete config;
+    delete listener;
     LibWheel::logmsg.close();
     return ret;
 }

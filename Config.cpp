@@ -13,6 +13,57 @@
 namespace Rknockd
 {
 
+char
+bintohex(boost::uint8_t c)
+{
+    static char hex_table[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',};
+    if (c >= 16)
+        return 'Z';
+    return hex_table[c];
+}
+
+boost::uint8_t
+hextobin(char c)
+{
+    switch (c)
+    {
+        case '0':
+            return 0; break;
+        case '1':
+            return 1; break;
+        case '2':
+            return 2; break;
+        case '3':
+            return 3; break;
+        case '4':
+            return 4; break;
+        case '5':
+            return 5; break;
+        case '6':
+            return 6; break;
+        case '7':
+            return 7; break;
+        case '8':
+            return 8; break;
+        case '9':
+            return 9; break;
+        case 'a': case 'A':
+            return 10; break;
+        case 'b': case 'B':
+            return 11; break;
+        case 'c': case 'C':
+            return 12; break;
+        case 'd': case 'D':
+            return 13; break;
+        case 'e': case 'E':
+            return 14; break;
+        case 'f': case 'F':
+            return 15; break;
+        default:
+            return std::numeric_limits<uint8_t>::max();
+    }
+}
+
 ConfigException::ConfigException(const std::string& d)
 : runtime_error(d)
 {}
@@ -262,8 +313,8 @@ RequestBase::parseRequest(const xmlpp::Element* elmt, const Config* config) THRO
 
 
 
-Config::Config(std::string& filename)
-: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(DEFAULT_CHALLENGE_BYTES), randomDevice(DEFAULT_RANDOM_DEVICE), nfQueueNum(0)
+Config::Config(const std::string& filename)
+: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(BITS_TO_BYTES(DEFAULT_CHALLENGE_BITS)), randomDevice(DEFAULT_RANDOM_DEVICE), nfQueueNum(0)
 {
     // we can't load the config file here because in a constructor, we don't 
     // know what subclass we are
@@ -411,9 +462,9 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
         throw ConfigException("Missing required attribute \"queue_num\" of element \"rknockd\"");
     
     // verify consistency
-    if (challengeBytes < MIN_CHALLENGE_BYTES)
+    if (challengeBytes < BITS_TO_BYTES(MIN_CHALLENGE_BITS))
         throw ConfigException("Value of \"challenge_bytes\" is too small for good security in element \"rknockd\"");
-    else if (challengeBytes > MAX_CHALLENGE_BYTES)
+    else if (challengeBytes > BITS_TO_BYTES(MAX_CHALLENGE_BITS))
         throw ConfigException("Unreasonably large value of \"challenge_bytes\" in element \"rknockd\"");
 }
 

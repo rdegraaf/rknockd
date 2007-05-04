@@ -1,85 +1,106 @@
 #include <cassert>
 #include <libxml++/libxml++.h>
 #include <boost/lexical_cast.hpp>
-#include <boost/tokenizer.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include "PKConfig.hpp"
+#include "common.h"
 
 namespace Rknockd
 {
 
-PKRequest::PKRequest(const xmlpp::Element* elmt, const PKConfig& config) THROW((ConfigException))
-: Request(), knocks(), encodedKnocks()
-{
-    // this can't be called by the base class constructor, since it doesn't know 
-    // what subclass it is
-    parseRequest(elmt, &config);
-}
+template<typename A, typename RequestPrinterType, typename C, typename D> const RequestPrinterType Request<A, RequestPrinterType, C, D>::requestPrinter = RequestPrinterType();
+template<typename A, typename B, typename RequestParserType, typename D> const RequestParserType Request<A, B, RequestParserType, D>::requestParser = RequestParserType();
 
-const std::vector<boost::uint16_t>& 
-PKRequest::getKnocks() const
-{
-    return knocks;
-}
-
-const std::set<boost::uint16_t>& 
-PKRequest::getEncodedKnocks() const
-{
-    return encodedKnocks;
-}
-
-void
-PKRequest::printRequest(std::ostream& os) const
+void 
+PKRequestPrinter::operator() (std::ostream& os, const PKRequestString& requestStr) const
 {
     os << "request:  ";
     
-    for (std::vector<boost::uint16_t>::const_iterator i=knocks.begin(); i!=knocks.end(); i++)
+    for (PKRequestString::const_iterator i=requestStr.begin(); i!=requestStr.end(); i++)
     {
         os << *i << ' ';
     }
     os << std::endl;
-
-    // print the basics
-    Request::printRequest(os);
 }
-
-
-void 
-PKRequest::parseRequestString(const std::string& str, const Config* c) THROW((ConfigException))
+void
+PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str, const Config* c) const THROW((ConfigException))
 {
-    boost::tokenizer<> tokens(str);
-    boost::uint16_t knock;
+    std::vector<boost::uint8_t> bytes;
+    std::vector<boost::uint16_t> plain_request;
     const PKConfig* config = dynamic_cast<const PKConfig*>(c);
+
     assert(config != NULL);
 
-    // parse the string and extract knock values
-    for(boost::tokenizer<>::const_iterator tok=tokens.begin(); tok!=tokens.end();++tok)
+    // first, parse the input string into an array of binary bytes
+    boost::uint8_t high;
+    boost::uint8_t low;
+    unsigned i = 0; // current index into string
+    std::string tstr = boost::trim_copy(str);
+
+    if ((tstr.length() > 2) && (tstr[0] == '0') && (tstr[1] == 'x'))
+        i = 2; // starts with "0x"
+
+    if ((tstr.length()-i > 0) && (tstr.length() & 0x01))
     {
-        try
-        {
-            knock = boost::lexical_cast<boost::uint16_t>(*tok);
-            if (knock > (1 << config->getBitsPerKnock()))
-                throw ConfigException(std::string("Knock value \"") + (*tok) + std::string("\" out of range in element \"request\""));
-            knocks.push_back(knock);
-        }
-        catch (boost::bad_lexical_cast& e)
-        {
-            throw ConfigException("Error parsing knock value in element \"request\"");
-        }
+        // string length is odd; get the first character
+        low = hextobin(tstr[i]);
+        if (low == std::numeric_limits<boost::uint8_t>::max())
+            throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
+        bytes.push_back(low);
+        i++;
+    }
+    
+    // we now have an even number of bytes remaining
+    for (; i+1<tstr.length(); i+=2)
+    {
+        high = hextobin(tstr[i]);
+        low = hextobin(tstr[i+1]);
+        if (high == std::numeric_limits<boost::uint8_t>::max())
+            throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
+        else if  (low == std::numeric_limits<boost::uint8_t>::max())
+            throw ConfigException(std::string("Value '") + tstr[i+1] + std::string("' out of range in element \"request\""));
+        bytes.push_back((high<<4) | low);
     }
 
+    
+    // next, convert the array of binary bytes to a simple port knock sequence
+    boost::uint32_t knock = 0;
+    unsigned bits = 0;
+    std::vector<boost::uint8_t>::iterator iter = bytes.begin();
+    
+    while (iter != bytes.end())
+    {
+        while ((bits < config->getBitsPerKnock()) && (iter != bytes.end()))
+        {
+            knock <<= 8;
+            knock |= *iter;
+            ++iter;
+            bits += 8;
+        }
+        plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
+        bits -= config->getBitsPerKnock();
+        knock &= ((1<<bits)-1);
+    }
+    if (bits > 0)
+        plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
+    
+    // finally, add sequencing information and create the final request
+    for (unsigned i = 0; i < plain_request.size(); ++i)
+        requestStr.insert(config->getBasePort() + plain_request[i] + i*(1<<config->getBitsPerKnock()));
+
     // make sure that we have a reasonable port sequence
-    if (knocks.size()*config->getBitsPerKnock() < MIN_REQUEST_BITS)
+    if (requestStr.size() * config->getBitsPerKnock() < MIN_REQUEST_BITS)
         throw ConfigException("Too few knocks in element \"request\"");
-    else if ((knocks.size()*config->getBitsPerKnock() > MAX_REQUEST_BITS) || (knocks.size() > config->getMaxKnocks()))
+    else if ((requestStr.size() * config->getBitsPerKnock() > MAX_REQUEST_BITS) || (requestStr.size() > config->getMaxKnocks()))
         throw ConfigException("Too many knocks in element \"request\"");
 
     // generate the encoded knock values, with sequence information
-    for (unsigned i=0; i<knocks.size(); i++)
-        encodedKnocks.insert(config->getBasePort() + knocks[i] + i*(1<<config->getBitsPerKnock()));
+    /*for (unsigned i=0; i<requestStr.size(); i++)
+        encodedKnocks.insert(config->getBasePort() + requestStr[i] + i*(1<<config->getBitsPerKnock()));*/
 }
 
 
-PKConfig::PKConfig(std::string& filename) THROW((ConfigException))
+PKConfig::PKConfig(const std::string& filename) THROW((ConfigException))
 : Config(filename), maxKnocks(DEFAULT_MAX_KNOCKS), bitsPerKnock(DEFAULT_BITS_PER_KNOCK), requests()
 {
     // this can't be called by the base class constructor, since it doesn't know 

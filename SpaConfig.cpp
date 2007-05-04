@@ -7,57 +7,6 @@
 namespace Rknockd
 {
 
-static char
-bintohex(boost::uint8_t c)
-{
-    static char hex_table[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',};
-    if (c >= 16)
-        return 'Z';
-    return hex_table[c];
-}
-
-static boost::uint8_t
-hextobin(char c)
-{
-    switch (c)
-    {
-        case '0':
-            return 0; break;
-        case '1':
-            return 1; break;
-        case '2':
-            return 2; break;
-        case '3':
-            return 3; break;
-        case '4':
-            return 4; break;
-        case '5':
-            return 5; break;
-        case '6':
-            return 6; break;
-        case '7':
-            return 7; break;
-        case '8':
-            return 8; break;
-        case '9':
-            return 9; break;
-        case 'a': case 'A':
-            return 10; break;
-        case 'b': case 'B':
-            return 11; break;
-        case 'c': case 'C':
-            return 12; break;
-        case 'd': case 'D':
-            return 13; break;
-        case 'e': case 'E':
-            return 14; break;
-        case 'f': case 'F':
-            return 15; break;
-        default:
-            return std::numeric_limits<uint8_t>::max();
-    }
-}
-
 void 
 SpaRequestPrinter::operator() (std::ostream& os, const SpaRequestString& requestStr) const
 {
@@ -107,13 +56,13 @@ SpaRequestParser::operator() (SpaRequestString& requestStr, const std::string& s
     }
 
     // make sure that we have a reasonable request string
-    if (requestStr.size() < MIN_REQUEST_BYTES)
+    if (requestStr.size() < BITS_TO_BYTES(MIN_REQUEST_BITS))
         throw ConfigException("Request sequence too short in element \"request\"");
-    else if (requestStr.size() > MAX_REQUEST_BYTES)
+    else if (requestStr.size() > BITS_TO_BYTES(MAX_REQUEST_BITS))
         throw ConfigException("Request sequence too long in element \"request\"");
 }
 
-SpaConfig::SpaConfig(std::string& filename) THROW((ConfigException))
+SpaConfig::SpaConfig(const std::string& filename) THROW((ConfigException))
 : Config(filename), requests()
 {
     // this can't be called by the base class constructor, since it doesn't know 
@@ -137,7 +86,7 @@ SpaConfig::printConfig(std::ostream& os) const
     Config::printConfig(os);
 
     // print the Requests
-    for (std::vector<SpaRequest>::const_iterator i=requests.begin(); i!=requests.end(); i++)
+    for (std::vector<SpaRequest>::const_iterator i=requests.begin(); i!=requests.end(); ++i)
     {
         i->printRequest(os);
     }

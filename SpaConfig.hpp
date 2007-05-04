@@ -6,8 +6,6 @@
 
     namespace Rknockd
     {
-        class SpaConfig; // forward declaration
-
         typedef std::vector<boost::uint8_t> SpaRequestString;
         
         struct SpaRequestPrinter
@@ -20,12 +18,14 @@
             void operator() (SpaRequestString& req, const std::string& str, const Config*) const THROW((ConfigException));
         };
         
+        class SpaConfig; // forward declaration
+
         typedef Request<SpaRequestString, SpaRequestPrinter, SpaRequestParser, SpaConfig> SpaRequest;
 
         class SpaConfig : public Config
         {
           public:
-            SpaConfig(std::string& filename) THROW((ConfigException));
+            SpaConfig(const std::string& filename) THROW((ConfigException));
             virtual ~SpaConfig();
             const std::vector<SpaRequest>& getRequests() const;
             void printConfig(std::ostream& os) const;
