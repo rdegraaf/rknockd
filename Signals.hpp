@@ -6,6 +6,14 @@
     #include <boost/function.hpp>
     #include <sys/select.h>
 
+    #ifndef THROW
+        #ifdef DEBUG
+            #define THROW(x) throw x
+        #else
+            #define THROW(x)
+        #endif
+    #endif
+
     namespace LibWheel
     {
         class SignalException : public std::exception
@@ -36,14 +44,36 @@
 
         namespace SignalQueue
         {
-            enum Action {DEFAULT, IGNORE};
-            void setHandler(int sig, Action act) throw(std::invalid_argument);
-            void setHandler(int sig, boost::function<void()> act) throw(std::invalid_argument);
+            enum Action {DEFAULT, IGNORE, HANDLE};
+            void setHandler(int sig, Action act) THROW((std::domain_error, std::invalid_argument));
+            void addHandler(int sig, boost::function<void()> act) THROW((std::invalid_argument));
+            template <typename T> void deleteHandler(int sig, const T& act) THROW((std::invalid_argument));
+            void deleteHandlers(int sig) THROW((std::invalid_argument));
             void handleNext();
             void handleAll();
-            bool pending() throw(std::runtime_error);
+            bool pending() THROW((std::runtime_error));
             int getReadFD();
             int select(int n, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout);
+
+
+        std::list<boost::function<void()> >* getSignalTable();
+
+        template <typename T>
+        void 
+        deleteHandler(int sig, const T& act) THROW((std::invalid_argument))
+        {
+            if ((sig < 1) || (sig > _NSIG))
+                throw std::invalid_argument("Invalid signal number");
+            
+            std::list<boost::function<void()> >& list = getSignalTable()[sig];
+            for (std::list<boost::function<void()> >::iterator i = list.begin(); i != list.end(); ++i)
+            {
+                if (boost::function_equal(*i, act))
+                    i = list.erase(i);
+            }
+        }
+
+
         } // namespace SignalQueue
 
     } // namespace LibWheel

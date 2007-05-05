@@ -1,11 +1,14 @@
 /*#ifdef DEBUG
     #include <iostream>
 #endif*/
+#include <list>
 #include <stdexcept>
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <csignal>
 #include <boost/function.hpp>
+#include <boost/function_equal.hpp>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/select.h>
@@ -100,11 +103,14 @@ namespace LibWheel
             static Pipe pipe;
             return pipe;
         }
+        
+        typedef std::list<boost::function<void()> > HandlerList;
 
-        static boost::function<void()>* 
+        // static // FIXME
+        HandlerList* 
         getSignalTable()
         {
-            static boost::function<void()> sigs[_NSIG];
+            static HandlerList sigs[_NSIG];
             return sigs;
         }
 
@@ -115,50 +121,55 @@ namespace LibWheel
         }
 
         void 
-        setHandler(int sig, Action act) throw(std::invalid_argument)
-        {
-            sighandler_t handler;
-
-            switch (act)
-            {
-              case DEFAULT:
-                handler = SIG_DFL;
-                break;
-              case IGNORE:
-                handler = SIG_IGN;
-                break;
-              default:
-                throw std::invalid_argument("Invalid action");
-            }
-
-            getSignalTable()[sig] = NULL;
-            handler = signal(sig, handler);
-            if (handler == SIG_ERR)
-                throw std::invalid_argument("Invalid signal number");
-        }
-
-
-        void 
-        setHandler(int sig, boost::function<void()> act) throw(std::invalid_argument)
+        setHandler(int sig, Action act) THROW((std::domain_error, std::invalid_argument))
         {
             struct sigaction handler;
             int ret;
 
-            if ((sig < 1) || (sig > _NSIG))
-                throw std::invalid_argument("Invalid signal number");
-
-            getSignalTable()[sig] = act;
+            switch (act)
+            {
+              case DEFAULT:
+                handler.sa_handler = SIG_DFL;
+                handler.sa_flags = 0;
+                break;
+              case IGNORE:
+                handler.sa_handler = SIG_IGN;
+                handler.sa_flags = 0;
+                break;
+              case HANDLE:
+                handler.sa_sigaction = SignalQueue_signalHandler;
+                handler.sa_flags = SA_SIGINFO;
+              default:
+                throw std::domain_error("Invalid action");
+            }
 
             // make sure that everything has been constructed
             (void)getPipe();
 
             // register the signal handler
-            handler.sa_flags = SA_SIGINFO;
-            handler.sa_sigaction = SignalQueue_signalHandler;
             sigemptyset(&handler.sa_mask);
             ret = sigaction(sig, &handler, NULL);
             if (ret == -1)
                 throw std::invalid_argument("Invalid signal number");
+        }
+
+
+        void 
+        addHandler(int sig, boost::function<void()> act) THROW((std::invalid_argument))
+        {
+            if ((sig < 1) || (sig > _NSIG))
+                throw std::invalid_argument("Invalid signal number");
+
+            getSignalTable()[sig].push_back(act);
+        }
+
+
+        void deleteHandlers(int sig) THROW((std::invalid_argument))
+        {
+            if ((sig < 1) || (sig > _NSIG))
+                throw std::invalid_argument("Invalid signal number");
+            
+            getSignalTable()[sig].clear();
         }
 
         void
@@ -180,8 +191,9 @@ namespace LibWheel
 /*#ifdef DEBUG
             std::cout << "signal " << (int)signal << " received" << std::endl;
 #endif*/
-            if (getSignalTable()[signal] != NULL)
-                (getSignalTable()[signal])();
+            const HandlerList& list = getSignalTable()[signal];
+            for (HandlerList::const_iterator i = list.begin(); i != list.end(); ++i)
+                (*i)();
         }
 
         void 

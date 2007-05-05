@@ -26,6 +26,24 @@
             CryptoException(const std::string& s);
         };
 
+        class BadRequestException : public std::runtime_error
+        {
+          public:
+            BadRequestException(const std::string& s);
+        };
+
+        class UnknownHostException : public std::runtime_error
+        {
+          public:
+            UnknownHostException(const std::string& s);
+        };
+
+        class SocketException : public std::runtime_error
+        {
+          public:
+            SocketException(const std::string& s);
+        };
+
         class Listener
         {
           public:

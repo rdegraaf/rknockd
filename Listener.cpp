@@ -35,6 +35,18 @@ CryptoException::CryptoException(const std::string& s)
 : runtime_error(s) 
 {}
 
+BadRequestException::BadRequestException(const std::string& s) 
+: runtime_error(s) 
+{}
+
+UnknownHostException::UnknownHostException(const std::string& s) 
+: runtime_error(s) 
+{}
+
+SocketException::SocketException(const std::string& s) 
+: runtime_error(s) 
+{}
+
 Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((IOException, NFQ::NfqException))
 : sock(cfg.getNfQueueNum()), randomDevice(cfg.getRandomDevice()), remapFile(remap), randomFD(), remapFD(), verbose(v)
 {

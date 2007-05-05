@@ -5,6 +5,7 @@
 #include "PKConfig.hpp"
 #include "common.h"
 
+#include <iostream>
 namespace Rknockd
 {
 
@@ -93,10 +94,6 @@ PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str
         throw ConfigException("Too few knocks in element \"request\"");
     else if ((requestStr.size() * config->getBitsPerKnock() > MAX_REQUEST_BITS) || (requestStr.size() > config->getMaxKnocks()))
         throw ConfigException("Too many knocks in element \"request\"");
-
-    // generate the encoded knock values, with sequence information
-    /*for (unsigned i=0; i<requestStr.size(); i++)
-        encodedKnocks.insert(config->getBasePort() + requestStr[i] + i*(1<<config->getBitsPerKnock()));*/
 }
 
 

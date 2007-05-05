@@ -43,6 +43,7 @@ then these will need to be converted to synchronous signal handlers.
 #include "Config.hpp"
 #include "NFQ.hpp"
 #include "Listener.hpp"
+#include "PKListener.hpp"
 #include "SpaConfig.hpp"
 #include "PKConfig.hpp"
 #include "Trie.hpp"
@@ -84,24 +85,6 @@ ipv4_to_string(boost::uint32_t a)
 class SpaListener : public Listener
 {
   private:
-    class BadRequestException : public std::runtime_error
-    {
-      public:
-        BadRequestException(const std::string& s) : runtime_error(s) {}
-    };
-    
-    class UnknownHostException : public std::runtime_error
-    {
-      public:
-        UnknownHostException(const std::string& s) : runtime_error(s) {}
-    };
-
-    class SocketException : public std::runtime_error
-    {
-      public:
-        SocketException(const std::string& s) : runtime_error(s) {}
-    };
-
     typedef boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> SpaResponse;
     typedef std::tr1::unordered_map<AddressPair, HostRecord<SpaRequest, SpaResponse>, AddressPairHash, AddressPairEqual> HostTable;
     typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
@@ -399,7 +382,8 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOExce
     }
     
     // set the SIGALARM handler
-    LibWheel::SignalQueue::setHandler(SIGALRM, boost::ref(hostTableGC));
+    LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::HANDLE);
+    LibWheel::SignalQueue::addHandler(SIGALRM, boost::ref(hostTableGC));
 }
 
 
@@ -407,7 +391,7 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOExce
 */
 SpaListener::~SpaListener()
 {
-    LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::DEFAULT);
+    LibWheel::SignalQueue::deleteHandler(SIGALRM, boost::ref(hostTableGC));
 }
 
 
@@ -508,7 +492,7 @@ void parse_args(int argc, char** argv, std::string& config_file, Mode& mode, boo
 }
 
 inline Config* 
-get_config(const Mode mode, const std::string& config_file) THROW((ConfigException, std::runtime_error))
+get_config(const Mode mode, const std::string& config_file) THROW((ConfigException, std::domain_error))
 {
     switch (mode)
     {
@@ -517,12 +501,12 @@ get_config(const Mode mode, const std::string& config_file) THROW((ConfigExcepti
       case MODE_PK:
         return new PKConfig(config_file);
       default:
-        throw std::runtime_error("Invalid mode");
+        throw std::domain_error("Invalid mode");
     }
 }
 
 inline Listener*
-get_listener(const Mode, const Config* config, const bool verbose)
+get_listener(const Mode, const Config* config, const bool verbose) THROW((std::domain_error))
 {
     const SpaConfig* spaConfig;
     const PKConfig* pkConfig;
@@ -531,10 +515,10 @@ get_listener(const Mode, const Config* config, const bool verbose)
 
     if ((spaConfig = dynamic_cast<const SpaConfig*>(config)) != NULL)
         return new SpaListener(*spaConfig, verbose);
-    /*else if ((pkConfig = dynamic_cast<const PKConfig*>(config)) != NULL)
-        return new PKListener(*pkConfig, verbose);*/
+    else if ((pkConfig = dynamic_cast<const PKConfig*>(config)) != NULL)
+        return new PKListener(*pkConfig, verbose);
     else
-        throw std::runtime_error("Invalid mode");
+        throw std::domain_error("Invalid mode");
 }
 
 void sigint_handler()
@@ -577,7 +561,6 @@ main(int argc, char** argv)
     try
     {
         // load configuration
-        //Rknockd::SpaConfig config(config_file);
         config = get_config(mode, config_file);
 #ifdef DEBUG
         config->printConfig(std::cout);
@@ -612,11 +595,11 @@ std::exit(1);
             return EXIT_FAILURE;
         }
 
-        LibWheel::SignalQueue::setHandler(SIGINT, Rknockd::sigint_handler);
+        LibWheel::SignalQueue::setHandler(SIGINT, LibWheel::SignalQueue::HANDLE);
+        LibWheel::SignalQueue::addHandler(SIGINT, Rknockd::sigint_handler);
         
         try
         {
-            //Rknockd::SpaListener listener(config, verbose);
             listener = get_listener(mode, config, verbose);
         
             // we've finished initializing; time to summon Beelzebub

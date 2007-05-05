@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<rknockd  random_dev="/dev/urandom" base_port="768" challenge_bytes="12" queue_num="3452">
+<rknockd  random_dev="/dev/urandom" base_port="768" challenge_bytes="12" queue_num="3452" max_knocks="16" bits_per_knock="7">
 <!-- this is a comment -->
     <request port="22" secret="asdf" ttl="15">
        0xe765bbcff0 
