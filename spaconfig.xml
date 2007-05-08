@@ -9,7 +9,7 @@
         5d0adf90077b <!--comment-->c132
     </request>
     <request port="23" secret="foobar" protocol="udp">
-        0x8996f310b4cfb42d
+        0x25c2d6ddd3e459
     </request>
     <request port="25" protocol="tcp" secret="qwertyuiop">
         44b2f58b8e81bc9cdf5259b08064

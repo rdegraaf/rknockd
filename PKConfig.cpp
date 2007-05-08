@@ -32,6 +32,8 @@ PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str
 
     assert(config != NULL);
 
+    // FIXME: this is overly complicated
+
     // first, parse the input string into an array of binary bytes
     boost::uint8_t high;
     boost::uint8_t low;
@@ -78,12 +80,15 @@ PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str
             ++iter;
             bits += 8;
         }
-        plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
-        bits -= config->getBitsPerKnock();
-        knock &= ((1<<bits)-1);
+        if (bits >= config->getBitsPerKnock())
+        {
+            plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
+            bits -= config->getBitsPerKnock();
+            knock &= ((1<<bits)-1);
+        }
     }
     if (bits > 0)
-        plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
+        plain_request.push_back(knock);
     
     // finally, add sequencing information and create the final request
     for (unsigned i = 0; i < plain_request.size(); ++i)

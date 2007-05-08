@@ -11,7 +11,7 @@ COMMIT
 :INPUT DROP [0:0]
 :FORWARD DROP [0:0]
 :OUTPUT ACCEPT [84:7506]
--A INPUT -p udp -m udp --dport 768 -j NFQUEUE --queue-num 3452 
+-A INPUT -p udp -m multiport --destination-ports 768:10000 -j NFQUEUE --queue-num 3452 
 -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED,DNAT -j ACCEPT 
 -A INPUT -p tcp -m multiport --dports 1:21,23:50 -j DROP 
 -A INPUT -p tcp -m tcp --dport 22 -j ACCEPT 

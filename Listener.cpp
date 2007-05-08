@@ -195,7 +195,12 @@ Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out)
     out << std::dec;*/
 }
 
-Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException))
+Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt)
+: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort()
+{}
+
+
+Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target)
 {}
 
@@ -238,22 +243,6 @@ Listener::HostRecordBase::getTargetPort() const
     return targetPort;
 }
 
-
-
-/* 
-Creates an AddressPair from a NfqUdpPacket 
-*/
-Listener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
-: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
-{}
-
-
-/* 
-Creates an AddressPair from a HostRecord
-*/
-Listener::AddressPair::AddressPair(const Listener::HostRecordBase& host)
-: saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
-{}
 
 
 /* 
@@ -366,19 +355,6 @@ Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf,
     delete[] msg;
     memset(key, 0, sizeof(key));
 }
-
-std::size_t 
-Listener::AddressPairHash::operator() (const Listener::AddressPair& a) const
-{
-    return uhash(a.saddr) ^ uhash(a.daddr)^ shash(a.sport) ^ (shash(a.dport)<<16);
-}
-
-bool
-Listener::AddressPairEqual::operator() (const AddressPair& a, const AddressPair& b) const 
-{
-    return ((a.saddr==b.saddr) && (a.daddr==b.daddr) && (a.sport==b.sport) && (a.dport==b.dport));
-}
-
 
 Listener::ListenerConstructor::ListenerConstructor()    
 {

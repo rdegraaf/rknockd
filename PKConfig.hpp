@@ -39,11 +39,12 @@
         class PKConfig : public Config
         {
           public:
+            typedef std::vector<PKRequest> RequestList;
             PKConfig(const std::string& filename) THROW((ConfigException));
             virtual ~PKConfig();
             const boost::uint8_t getMaxKnocks() const;
             const unsigned getBitsPerKnock() const;
-            const std::vector<PKRequest>& getRequests() const;
+            const RequestList& getRequests() const;
             void printConfig(std::ostream& os) const;
           private:
             void parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException));

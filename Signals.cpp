@@ -139,6 +139,7 @@ namespace LibWheel
               case HANDLE:
                 handler.sa_sigaction = SignalQueue_signalHandler;
                 handler.sa_flags = SA_SIGINFO;
+                break;
               default:
                 throw std::domain_error("Invalid action");
             }

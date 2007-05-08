@@ -139,6 +139,7 @@ hextobin(char c)
             return UINT8_MAX;
     }
 }
+
 static void
 print_config(const struct spa_config* config, FILE* file)
 {
@@ -181,7 +182,6 @@ get_config_cmdl(struct spa_config* config, const int argc, const char** argv)
         return -1;
     }
     config->server_address.sin_addr.s_addr = *((in_addr_t*)host->h_addr_list[0]);
-    
     
     /* get the server port number */
     tmp = strtoul(argv[2], &ptr, 10);
@@ -333,13 +333,16 @@ send_request(int sock, const struct spa_config* config)
     if (retval == -1)
     {
         fprintf(stderr, "Error sending request: %s\n", strerror(errno));
+        free(message);
         return -1;
     }
     else if (retval != (ssize_t)len)
     {
         fprintf(stderr, "Error sending request: message truncated\n");
+        free(message);
         return -1;
     }
+    free(message);
     return 0;
 }
 

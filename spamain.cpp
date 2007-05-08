@@ -85,8 +85,39 @@ ipv4_to_string(boost::uint32_t a)
 class SpaListener : public Listener
 {
   private:
+    struct AddressPair
+    {
+        boost::uint32_t saddr;
+        boost::uint32_t daddr;
+        boost::uint16_t sport;
+        boost::uint16_t dport;
+        AddressPair(const NFQ::NfqUdpPacket* pkt);
+        AddressPair(const Listener::HostRecordBase& host);
+    };
+
+    struct AddressPairHash
+    {
+        std::tr1::hash<boost::uint32_t> uhash;
+        std::tr1::hash<boost::uint16_t> shash;
+        std::size_t operator()(const AddressPair& a) const;
+    };
+    struct AddressPairEqual
+    {
+        bool operator() (const AddressPair& a, const AddressPair& b) const;
+    };
+            
     typedef boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> SpaResponse;
-    typedef std::tr1::unordered_map<AddressPair, HostRecord<SpaRequest, SpaResponse>, AddressPairHash, AddressPairEqual> HostTable;
+    class HostRecord : public HostRecordBase
+    {
+        const SpaRequest& request;
+        SpaResponse response;
+      public:
+        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
+        const SpaRequest& getRequest() const;
+        const SpaResponse& getResponse() const;
+    };
+
+    typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
     typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
 
     const SpaConfig& config;
@@ -94,10 +125,10 @@ class SpaListener : public Listener
     RequestTable requestTable;
     HostTableGC<HostTable> hostTableGC;
 
-    HostRecord<SpaRequest, SpaResponse>& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
-    bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaRequest, SpaResponse>& host);
-    void openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IOException));
-    void deleteState(const HostRecord<SpaRequest, SpaResponse>& host);
+    HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
+    bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
+    void openPort(const HostRecord& host) THROW((IOException));
+    void deleteState(const HostRecord& host);
     const SpaRequest& checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException));
     void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
     void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
@@ -107,13 +138,59 @@ class SpaListener : public Listener
     ~SpaListener();
 };
 
+SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
+: HostRecordBase(pkt, target), request(req), response()
+{
+    Listener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
+}
+
+const SpaRequest&
+SpaListener::HostRecord::getRequest() const
+{
+    return request;
+}
+
+const SpaListener::SpaResponse&
+SpaListener::HostRecord::getResponse() const
+{
+    return response;
+}
+
+/*
+Creates an AddressPair from a NfqUdpPacket 
+*/
+SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
+: saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
+{}
+
+
+/* 
+Creates an AddressPair from a HostRecord
+*/
+SpaListener::AddressPair::AddressPair(const Listener::HostRecordBase& host)
+: saddr(host.getSrcAddr()), daddr(host.getDstAddr()), sport(host.getSrcPort()), dport(host.getDstPort())
+{}
+
+
+std::size_t 
+SpaListener::AddressPairHash::operator() (const AddressPair& a) const
+{
+    return uhash(a.saddr) ^ uhash(a.daddr) ^ shash(a.sport) ^ (shash(a.dport)<<16);
+}
+
+bool
+SpaListener::AddressPairEqual::operator() (const AddressPair& a, const AddressPair& b) const 
+{
+    return ((a.saddr==b.saddr) && (a.daddr==b.daddr) && (a.sport==b.sport) && (a.dport==b.dport));
+}
+
 
 /* 
 Looks up a host in the host hash table 
 If an entry exists in the hash table matching *pkt, return it.  Otherwise, 
 throw an UnknownHostException.
 */
-SpaListener::HostRecord<SpaRequest, SpaListener::SpaResponse>& 
+SpaListener::HostRecord& 
 SpaListener::getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException))
 {
     HostTable::iterator iter = hostTable.find(AddressPair(pkt));
@@ -129,7 +206,7 @@ If the response in *pkt is the one expected for host, return true.  Otherwise,
 return false.
 */
 bool 
-SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord<SpaRequest, SpaResponse>& host)
+SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 {
     size_t payload_size;
     const boost::uint8_t* contents = pkt->getUdpPayload(payload_size);
@@ -152,7 +229,7 @@ Sends a message to ipt_REMAP asking it to redirect the next connection to
 the random target port to the requested destination port
 */
 void 
-SpaListener::openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IOException))
+SpaListener::openPort(const HostRecord& host) THROW((IOException))
 {
     struct ipt_remap remap;
     int ret;
@@ -189,7 +266,7 @@ SpaListener::openPort(const HostRecord<SpaRequest, SpaResponse>& host) THROW((IO
 Remove an entry from the host hash table
 */
 void 
-SpaListener::deleteState(const HostRecord<SpaRequest, SpaResponse>& host)
+SpaListener::deleteState(const HostRecord& host)
 {
     hostTable.erase(AddressPair(host));
 }
@@ -295,7 +372,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
         throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
 
     // create a record for this host
-    HostRecord<SpaRequest, SpaResponse> hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
+    HostRecord hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
     AddressPair haddr(hrec);
     hostTable.insert(std::make_pair(haddr, hrec));
     hostTableGC.schedule(haddr, TIMEOUT_SECS, TIMEOUT_USECS);
@@ -319,7 +396,7 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
 
     try
     {
-        HostRecord<SpaRequest, SpaResponse>& host = getRecord(packet);
+        HostRecord& host = getRecord(packet);
 
         // we have already issued a challenge to this host;
         // check if this is a valid response
@@ -375,13 +452,12 @@ SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOExce
 {
     // program the requests trie with all request strings
     const std::vector<SpaRequest>& requests = c.getRequests();
-
     for (std::vector<SpaRequest>::const_iterator i = requests.begin(); i != requests.end(); ++i)
     {
         requestTable.addString(i->getRequestString(), *i);
     }
     
-    // set the SIGALARM handler
+    // set the SIGALRM handler
     LibWheel::SignalQueue::setHandler(SIGALRM, LibWheel::SignalQueue::HANDLE);
     LibWheel::SignalQueue::addHandler(SIGALRM, boost::ref(hostTableGC));
 }
@@ -565,8 +641,6 @@ main(int argc, char** argv)
 #ifdef DEBUG
         config->printConfig(std::cout);
 #endif
-
-std::exit(1);
 
         // make sure that we're running as root
         if (geteuid() != 0)

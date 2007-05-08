@@ -3,27 +3,6 @@
 namespace Rknockd
 {
 
-    template <typename ReqType, typename RespType>
-    Listener::HostRecord<ReqType, RespType>::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
-    : HostRecordBase(pkt, target), request(req), response()
-    {
-        Listener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
-    }
-
-    template <typename ReqType, typename RespType>
-    const ReqType&
-    Listener::HostRecord<ReqType, RespType>::getRequest() const
-    {
-        return request;
-    }
-
-    template <typename ReqType, typename RespType>
-    const RespType&
-    Listener::HostRecord<ReqType, RespType>::getResponse() const
-    {
-        return response;
-    }
-
     template <typename HostTableType>
     Listener::HostTableGC<HostTableType>::HostTableGC(HostTableType& table, bool verbose_logging)
     : table(table), gcQueue(), verbose(verbose_logging)
@@ -32,7 +11,7 @@ namespace Rknockd
 
     template <typename HostTableType>
     void 
-    Listener::HostTableGC<HostTableType>::schedule(AddressPair& addr, long secs, long usecs)
+    Listener::HostTableGC<HostTableType>::schedule(typename HostTableType::key_type& addr, long secs, long usecs)
     {
         struct timeval time;
         struct itimerval itime;

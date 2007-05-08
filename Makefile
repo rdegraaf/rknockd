@@ -10,8 +10,14 @@ spaclient_CCFLAGS=
 spaclient_LDFLAGS=
 spaclient_LIBS=-lcrypto
 
+pkclient_OBJS=pkclient.o
+pkclient_CCFLAGS=
+pkclient_LDFLAGS=
+pkclient_LIBS=-lcrypto
+
 spaserver_OBJS=spamain.o Config.o SpaConfig.o NFQ.o Listener.o Signals.o \
-	       PKConfig.o spc_sanitize.o logmsg.o Logmsg.o drop_priv.o
+	       PKConfig.o PKListener.o spc_sanitize.o logmsg.o Logmsg.o \
+	       drop_priv.o
 spaserver_CXXFLAGS=-IREMAP/linux-2.6.20.7/include \
 		`libgcrypt-config --cflags` \
 		`pkg-config --cflags libxml++-2.6`
@@ -21,7 +27,10 @@ spaserver_LIBS=`libgcrypt-config --libs` `pkg-config --libs libxml++-2.6` \
 
 .PHONY: all clean distclean depend
 
-all: spaclient spaserver
+all: spaclient spaserver pkclient
+
+pkclient: ${pkclient_OBJS}
+	${CC} -o $@ $^ ${LDFLAGS} ${pkclient_LDFLAGS} ${pkclient_LIBS}
 
 spaclient: ${spaclient_OBJS}
 	${CC} -o $@ $^ ${LDFLAGS} ${spaclient_LDFLAGS} ${spaclient_LIBS}

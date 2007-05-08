@@ -75,7 +75,8 @@
                 boost::uint16_t dport;
                 boost::uint16_t targetPort;
               public:
-                HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target) THROW((CryptoException));
+                HostRecordBase(const NFQ::NfqUdpPacket* pkt);
+                HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target);
                 virtual ~HostRecordBase();
                 boost::uint32_t getSrcAddr() const;
                 boost::uint16_t getSrcPort() const;
@@ -84,50 +85,16 @@
                 boost::uint16_t getTargetPort() const;
             };
 
-            template <typename ReqType, typename RespType>
-            class HostRecord : public HostRecordBase
-            {
-                const ReqType& request;
-                RespType response;
-              public:
-                typedef ReqType RequestType;
-                typedef RespType ResponseType;
-                HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const ReqType& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
-                const ReqType& getRequest() const;
-                const RespType& getResponse() const;
-            };
-
-            struct AddressPair
-            {
-                boost::uint32_t saddr;
-                boost::uint32_t daddr;
-                boost::uint16_t sport;
-                boost::uint16_t dport;
-                AddressPair(const NFQ::NfqUdpPacket* pkt);
-                AddressPair(const Listener::HostRecordBase& host);
-            };
-
-            struct AddressPairHash
-            {
-                std::tr1::hash<boost::uint32_t> uhash;
-                std::tr1::hash<boost::uint16_t> shash;
-                std::size_t operator()(const Listener::AddressPair& a) const;
-            };
-            struct AddressPairEqual
-            {
-                bool operator() (const AddressPair& a, const AddressPair& b) const;
-            };
-            
             template <typename HostTableType>
             class HostTableGC
             {
               public:
                 HostTableGC(HostTableType& t, bool verbose_logging);
-                void schedule(AddressPair& addr, long secs, long usecs);
+                void schedule(typename HostTableType::key_type& addr, long secs, long usecs);
                 void operator()();
               private:
                 HostTableType& table;
-                std::queue<std::pair<struct timeval, AddressPair> > gcQueue;
+                std::queue<std::pair<struct timeval, typename HostTableType::key_type> > gcQueue;
                 bool verbose;
             };
     

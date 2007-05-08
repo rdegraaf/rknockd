@@ -66,10 +66,12 @@
                 throw std::invalid_argument("Invalid signal number");
             
             std::list<boost::function<void()> >& list = getSignalTable()[sig];
-            for (std::list<boost::function<void()> >::iterator i = list.begin(); i != list.end(); ++i)
+            for (std::list<boost::function<void()> >::iterator i = list.begin(); i != list.end(); )
             {
                 if (boost::function_equal(*i, act))
                     i = list.erase(i);
+                else
+                    ++i;
             }
         }
 
