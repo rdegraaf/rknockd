@@ -3,6 +3,7 @@
     
     #include <set>
     #include <exception>
+    #include <stdexcept>
     #include <tr1/unordered_set>
     #include <tr1/unordered_map>
     #include <boost/cstdint.hpp>
@@ -42,22 +43,22 @@
                 bool operator() (const AddressPair& a, const AddressPair& b) const;
             };
             
-            typedef std::set<boost::uint16_t> PKResponse;
             class HostRecord : public HostRecordBase
             {
               public:
                 enum State { CLOSED, REQUEST, CHALLENGE, RESPONSE, OPEN };
-                typedef std::tr1::unordered_map<const PKRequest*, PKRequestString> RequestList;
+                typedef std::tr1::unordered_map<const PKRequest*, KnockSequence> RequestList;
                 
                 HostRecord(const NFQ::NfqUdpPacket* pkt);
                 State getState() const;
-                //const PKResponse& getResponse() const;
+                KnockSequence& getResponse();
+                const PKRequest& getRequest() const;
                 //const RequestList& getRequests() const;
                 void updateState(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests);
               private:
                 State state;
                 const PKRequest* request;
-                PKResponse response;
+                KnockSequence response;
                 RequestList requests;
                 
                 void updateRequest(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests);
@@ -76,8 +77,7 @@
             HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt, bool in_request) THROW((BadRequestException));
             //void deleteRecord(const NFQ::NfqUdpPacket* pkt);
             void deleteRecord(const HostRecord& rec);
-            void issueChallenge(const HostRecord& rec) THROW((CryptoException, IOException, SocketException));
-            void openPort(const HostRecord& rec) THROW((IOException));
+            void issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW((CryptoException, IOException, SocketException));
             
           public:
             PKListener(const PKConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));

@@ -27,7 +27,7 @@ struct spa_config
     struct sockaddr_in server_address;
     char key[MAX_KEY_SIZE+1];
     size_t key_len;
-    uint8_t request[MAX_REQUEST_BYTES];
+    uint8_t request[BITS_TO_BYTES(MAX_REQUEST_BITS)];
     size_t request_len;
     enum {IGNORE_CLIENT_ADDRESS, MANUAL_CLIENT_ADDRESS, AUTO_CLIENT_ADDRESS} client_address_mode;
     in_addr_t client_address;
@@ -37,7 +37,7 @@ struct spa_challenge
 {
     uint16_t port;
     uint16_t nonce_len;
-    uint8_t nonce[MAX_CHALLENGE_BYTES];
+    uint8_t nonce[BITS_TO_BYTES(MAX_CHALLENGE_BITS)];
 };
     
 /*****************************
@@ -197,12 +197,12 @@ get_config_cmdl(struct spa_config* config, const int argc, const char** argv)
     i = 0;
     if ((len >= 2) && (argv[3][0] == '0') && (argv[3][1] == 'x'))
         i = 2;
-    if ((len-i+1)/2 < MIN_REQUEST_BYTES)
+    if ((len-i+1)*4 < MIN_REQUEST_BITS)
     {
         fprintf(stderr, "Error: request too short\n");
         return -1;
     }
-    else if ((len-i+1)/2 > MAX_REQUEST_BYTES)
+    else if ((len-i+1)*4 > MAX_REQUEST_BITS)
     {
         fprintf(stderr, "Error: request too long\n");
         return -1;
@@ -348,14 +348,14 @@ send_request(int sock, const struct spa_config* config)
 
 static int decrypt_port(uint16_t* port, const uint8_t* buf, const char* key, size_t keylen)
 {
-    uint8_t hash[HASH_BYTES];
+    uint8_t hash[BITS_TO_BYTES(HASH_BITS)];
     struct PortMessage message;
     AES_KEY ctx;
     int retval;
     
-    assert(sizeof(struct PortMessage) == CIPHER_BLOCK_BYTES);
-    assert(HASH_BYTES >= PORT_MESSAGE_HASH_BYTES);
-    assert(HASH_BYTES >= CIPHER_KEY_BYTES);
+    assert(sizeof(struct PortMessage)*8 == CIPHER_BLOCK_BITS);
+    assert(HASH_BITS >= PORT_MESSAGE_HASH_BITS);
+    assert(HASH_BITS >= CIPHER_KEY_BITS);
 
     /* generate the decryption key */
     SHA1((unsigned char*)key, keylen, hash);
@@ -388,7 +388,7 @@ static int decrypt_port(uint16_t* port, const uint8_t* buf, const char* key, siz
 static int
 receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_config* config)
 {
-    uint8_t buf[sizeof(struct SpaChallengeHeader)+MAX_CHALLENGE_BYTES];
+    uint8_t buf[sizeof(struct ChallengeHeader)+BITS_TO_BYTES(MAX_CHALLENGE_BITS)];
     int retval;
     struct timeval timeout;
     
@@ -417,14 +417,14 @@ receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_co
     }
 
     /* parse the message */    
-    challenge->nonce_len = ((struct SpaChallengeHeader*)buf)->nonceBytes;
-    if (retval != (int)(sizeof(struct SpaChallengeHeader)+challenge->nonce_len))
+    challenge->nonce_len = ntohs(((struct ChallengeHeader*)buf)->nonceBytes);
+    if (retval != (int)(sizeof(struct ChallengeHeader)+challenge->nonce_len))
     {
         fprintf(stderr, "Error receiving challenge: message truncated\n");
         return -1;
     }
-    memcpy(challenge->nonce, buf+sizeof(struct SpaChallengeHeader), challenge->nonce_len);
-    retval = decrypt_port(&challenge->port, buf+offsetof(struct SpaChallengeHeader, portMessage), config->key, config->key_len);
+    memcpy(challenge->nonce, buf+sizeof(struct ChallengeHeader), challenge->nonce_len);
+    retval = decrypt_port(&challenge->port, buf+offsetof(struct ChallengeHeader, portMessage), config->key, config->key_len);
     if (retval)
         return -1; /* error message already logged */
     
@@ -439,7 +439,7 @@ static int compute_mac(uint8_t* mac, int sock, const struct spa_challenge* chall
     struct sockaddr_in addr;
     socklen_t addr_len;
     int retval;
-    uint8_t key[HASH_BYTES];
+    uint8_t key[BITS_TO_BYTES(HASH_BITS)];
     
     assert(challenge != NULL);
     assert(config != NULL);
@@ -487,7 +487,7 @@ static int compute_mac(uint8_t* mac, int sock, const struct spa_challenge* chall
     SHA1((unsigned char*)config->key, config->key_len, key);
     
     /* generate the MAC */
-    HMAC(EVP_sha1(), key, HASH_BYTES, buf, buflen, mac, NULL);
+    HMAC(EVP_sha1(), key, BITS_TO_BYTES(HASH_BITS), buf, buflen, mac, NULL);
     
     free(buf);
     return 0;
@@ -496,7 +496,7 @@ static int compute_mac(uint8_t* mac, int sock, const struct spa_challenge* chall
 static int
 send_response(int sock, const struct spa_challenge* challenge, const struct spa_config* config)
 {
-    uint8_t buf[HASH_BYTES];
+    uint8_t buf[BITS_TO_BYTES(HASH_BITS)];
     int retval;
     
     assert(challenge != NULL);

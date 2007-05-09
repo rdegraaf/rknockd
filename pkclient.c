@@ -4,12 +4,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
 #include <unistd.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <openssl/sha.h>
+#include <openssl/aes.h>
+#include <openssl/hmac.h>
 #include "common.h"
+
+union uint32_u
+{
+    uint32_t u32;
+    uint8_t u8[4];
+};
+
+union uint16_u
+{
+    uint16_t u16;
+    uint8_t u8[2];
+};
 
 struct pk_config
 {
@@ -23,7 +40,6 @@ struct pk_config
     uint16_t base_port;
     uint16_t bits_per_knock;
 };
-
 
 struct pk_challenge
 {
@@ -165,12 +181,13 @@ open_socket(const struct pk_config* config)
     }
     
     /* connect */
-    /*retval = connect(sock, (struct sockaddr*)&config->server_address, sizeof(config->server_address));
+    addr.sin_addr.s_addr = config->server_address;
+    retval = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
     if (retval == -1)
     {
         fprintf(stderr, "Error connecting socket: %s\n", strerror(errno));
         return -1;
-    }*/
+    }
     
     /* FIXME: get local address here */
     
@@ -178,10 +195,25 @@ open_socket(const struct pk_config* config)
 }
 
 
+static inline int 
+send_knock(int sock, const struct sockaddr_in* addr)
+{
+    ssize_t retval;
+    
+    retval = sendto(sock, NULL, 0, 0, (struct sockaddr*)addr, sizeof(struct sockaddr_in));
+    if (retval == -1)
+    {
+        fprintf(stderr, "Error sending knock: %s\n", strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+
 static int
 send_request(int sock, const struct pk_config* config)
 {
-    uint8_t message[1];
     ssize_t retval;
     unsigned i;
     struct sockaddr_in addr;
@@ -193,27 +225,267 @@ send_request(int sock, const struct pk_config* config)
     for (i=0; i<config->request_len; ++i)
     {
         addr.sin_port = htons(config->request[i]);
-        retval = sendto(sock, message, 0, 0, (struct sockaddr*)&addr, sizeof(addr));
+        retval = send_knock(sock, &addr);
         if (retval == -1)
-        {
-            fprintf(stderr, "Error sending knock: %s\n", strerror(errno));
-            return -1;
-        }
+            return -1; /* message already logged */
     }
 
     return 0;
 }
 
 
-static int 
-receive_challenge(int sock, struct pk_challenge* challenge, const struct pk_config* config)
+static int decrypt_port(uint16_t* port, const uint8_t* buf, const char* key, size_t keylen)
 {
+    uint8_t hash[BITS_TO_BYTES(HASH_BITS)];
+    struct PortMessage message;
+    AES_KEY ctx;
+    int retval;
+    
+    assert(sizeof(struct PortMessage)*8 == CIPHER_BLOCK_BITS);
+    assert(HASH_BITS >= PORT_MESSAGE_HASH_BITS);
+    assert(HASH_BITS >= CIPHER_KEY_BITS);
+
+    /* generate the decryption key */
+    SHA1((unsigned char*)key, keylen, hash);
+    
+    /* decrypt the message */
+    retval = AES_set_decrypt_key(hash, 128, &ctx);
+    if (retval)
+    {
+        fprintf(stderr, "Error setting decryption key\n");
+        return -1;
+    }
+    AES_ecb_encrypt(buf, (unsigned char*)&message, &ctx, AES_DECRYPT);
+
+    /* verify the hash */
+    SHA1((unsigned char*)&message, offsetof(struct PortMessage, hash), hash);
+    if (memcmp(hash, message.hash, sizeof(message.hash)))
+    {
+        fprintf(stderr, "Error verifying challenge hash\n");
+        return -1;
+    }
+
+#ifdef DEBUG
+    fprintf(stderr, "received challenge, dport=%hu\n", ntohs(message.port));
+#endif
+
+    *port = ntohs(message.port);
+    return 0;
+}
+
+void copy_switch_16(uint8_t* dest, const uint16_t* src, size_t n)
+{
+    unsigned i;
+    
+    for (i=0; i<n; ++i)
+    {
+        ((uint16_t*)dest)[i] = htons(src[i]);
+    }
+    /*union uint16_u* elem;
+    
+    elem = (union uint16_u*)dest;
+    for (i=0; i<n; ++i)
+    {
+        elem->u16 = htons(src[i]);
+        elem = (union uint16_u*)(dest+2*i);
+    }*/
+}
+
+
+/* FIXME: memory leaks (also in spaclient) */
+static int compute_mac(uint8_t* mac, int sock, const struct pk_challenge* challenge, const struct pk_config* config)
+{
+    uint8_t* buf;
+    size_t buflen;
+    union uint32_u u;
+    struct sockaddr_in addr;
+    socklen_t addr_len;
+    int retval;
+    uint8_t key[BITS_TO_BYTES(HASH_BITS)];
+    
+    assert(challenge != NULL);
+    assert(config != NULL);
+    
+    /* allocate a buffer for the message */
+    buflen = challenge->nonce_len + sizeof(uint32_t) + sizeof(uint32_t) + config->request_len*sizeof(uint16_t);
+    buf = malloc(buflen);
+    if (buf == NULL)
+    {
+        fprintf(stderr, "Error: out of memory\n");
+        return -1;
+    }
+    
+    /* copy the challenge into the message */
+    memcpy(buf, challenge->nonce, challenge->nonce_len);
+    
+    /* copy the client address into the message */
+    if (config->client_address_mode == IGNORE_CLIENT_ADDRESS)
+        u.u32 = 0;
+    else if (config->client_address_mode == MANUAL_CLIENT_ADDRESS)
+        u.u32 = config->client_address; /* already in NBO */
+    else
+    {
+        addr_len = sizeof(addr);
+        retval = getsockname(sock, (struct sockaddr*)&addr, &addr_len);
+        if (retval == -1)
+        {
+            fprintf(stderr, "Error retrieving socket address: %s\n", strerror(errno));
+            return -1;
+        }
+        printf("WARNING: Using auto-detected source address %s\n", inet_ntoa(addr.sin_addr));
+        printf("If this address is modified in transit by a NAT, authentication will fail.\n");
+        u.u32 = addr.sin_addr.s_addr; /* already in NBO */
+    }
+    memcpy(buf+challenge->nonce_len, u.u8, sizeof(uint32_t));
+    
+    /* copy the server address into the message */    
+    u.u32 = config->server_address; /* already in NBO */
+    memcpy(buf+challenge->nonce_len+sizeof(uint32_t), u.u8, sizeof(uint32_t));
+    
+    /* copy the request into the message */
+    /* we need to switch byte order, so we can't use memcpy */
+    copy_switch_16(buf+challenge->nonce_len+2*sizeof(uint32_t), config->request, config->request_len);
+    //memcpy(buf+challenge->nonce_len+2*sizeof(uint32_t), config->request, config->request_len*sizeof(uint16_t));
+
+    /* generate the MAC key */
+    SHA1((unsigned char*)config->key, config->key_len, key);
+    
+    /* generate the MAC */
+    HMAC(EVP_sha1(), key, BITS_TO_BYTES(HASH_BITS), buf, buflen, mac, NULL);
+    
+    free(buf);
     return 0;
 }
 
 static int 
+receive_challenge(int sock, struct pk_challenge* challenge, const struct pk_config* config)
+{
+    uint8_t buf[sizeof(struct ChallengeHeader)+BITS_TO_BYTES(MAX_CHALLENGE_BITS)];
+    int retval;
+    struct timeval timeout;
+    
+    assert(challenge != NULL);
+    assert(config != NULL);
+    
+    /* set the socket timeout */
+    timeout.tv_sec = TIMEOUT_SECS;
+    timeout.tv_usec = TIMEOUT_USECS;
+    retval = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (retval == -1)
+    {
+        fprintf(stderr, "Error setting socket timeout: %s\n", strerror(errno));
+        return -1;
+    }
+    
+    /* receive the message */
+    retval = recv(sock, buf, sizeof(buf), 0);
+    if (retval == -1)
+    {
+        if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
+            fprintf(stderr, "Timeout waiting for server response\n");
+        else
+            fprintf(stderr, "Error receiving challenge: %s\n", strerror(errno));
+        return -1;
+    }
+    
+    /* parse the message */
+    challenge->nonce_len = ntohs(((struct ChallengeHeader*)buf)->nonceBytes);
+    if (retval != (int)(sizeof(struct ChallengeHeader)+challenge->nonce_len))
+    {
+        fprintf(stderr, "Error receiving challenge: message truncated\n");
+        return -1;
+    }
+    memcpy(challenge->nonce, buf+sizeof(struct ChallengeHeader), challenge->nonce_len);
+    retval = decrypt_port(&challenge->port, buf+offsetof(struct ChallengeHeader, portMessage), config->key, config->key_len);
+    if (retval)
+        return -1; /* error message already logged */
+    
+    return 0;
+}
+
+
+static int 
+send_knock_sequence(int sock, const uint8_t* buf, size_t buflen, const struct pk_config* config)
+{
+    unsigned bits = 0;
+    unsigned knock = 0;
+    unsigned count = 0;
+    unsigned i;
+    unsigned port;
+    struct sockaddr_in addr;
+    int retval;
+    
+    assert(buf != NULL);
+    assert(config != NULL);
+    
+    /* initialize addr */
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = config->server_address; /* already in NBO */
+    
+    /* send the knock sequence */
+    for (i=0; i<buflen; )
+    {
+        while ((bits < config->bits_per_knock) && (i < buflen))
+        {
+            knock <<= 8;
+            knock |= buf[i];
+            i++;
+            bits += 8;
+        }
+        if (bits >= config->bits_per_knock)
+        {
+            port = config->base_port + (knock >> (bits - config->bits_per_knock)) + count*(1<<config->bits_per_knock);
+            if (port > 65535)
+            {
+                fprintf(stderr, "Knock value %u out of range\n", port);
+                return -1;
+            }
+            count++;
+            bits -= config->bits_per_knock;
+            knock &= ((1<<bits)-1);
+            addr.sin_port = htons(port);
+            retval = send_knock(sock, &addr);
+            if (retval == -1)
+                return -1; /* message already logged */
+        }
+    }
+    if (bits > 0)
+    {
+        port = config->base_port + knock + count*(1<<config->bits_per_knock);
+        if (port > 65535)
+        {
+            fprintf(stderr, "Knock value %u out of range\n", port);
+            return -1;
+        }
+        addr.sin_port = htons(port);
+        retval = send_knock(sock, &addr);
+        if (retval == -1)
+            return -1; /* message already logged */
+    }
+
+    return 0;
+}
+        
+
+
+static int 
 send_response (int sock, const struct pk_challenge* challenge, const struct pk_config* config)
 {
+    uint8_t buf[BITS_TO_BYTES(HASH_BITS)];
+    int retval;
+    
+    assert(challenge != NULL);
+    assert(config != NULL);
+    
+    retval = compute_mac(buf, sock, challenge, config);
+    if (retval == -1)
+        return -1; /* error message already logged */
+
+    retval = send_knock_sequence(sock, buf, sizeof(buf), config);
+    if (retval == -1)
+        return -1; /* error message already logged */
+    
     return 0;
 }
 

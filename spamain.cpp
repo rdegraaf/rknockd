@@ -11,6 +11,7 @@ then these will need to be converted to synchronous signal handlers.
 // FIXME: drop root privileges after start-up
 // FIXME: do something intelligent with memory used to hold passwords
 // FIXME: implement the "address" config attribute
+// FIXME: auto_ptr
 
 #define PROGNAME spaserver
 #define VERSION 0.1
@@ -18,7 +19,6 @@ then these will need to be converted to synchronous signal handlers.
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
-#include <sstream>
 #include <map>
 #include <vector>
 #include <cassert>
@@ -61,26 +61,6 @@ enum Mode
     MODE_SPA,
     MODE_PK
 };
-
-std::string 
-ipv4_to_string(boost::uint32_t a)
-{
-    union uint32_bytes
-    {
-        boost::uint32_t u32;
-        boost::uint8_t u8[4];
-    };
-    std::ostringstream os;
-    uint32_bytes addr;
-    
-    addr.u32 = htonl(a); // convert to big-endian
-    os << static_cast<unsigned>(addr.u8[0]) << '.' 
-       << static_cast<unsigned>(addr.u8[1]) << '.' 
-       << static_cast<unsigned>(addr.u8[2]) << '.' 
-       << static_cast<unsigned>(addr.u8[3]);
-    return os.str();
-}
-
 
 class SpaListener : public Listener
 {
@@ -127,7 +107,6 @@ class SpaListener : public Listener
 
     HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
     bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
-    void openPort(const HostRecord& host) THROW((IOException));
     void deleteState(const HostRecord& host);
     const SpaRequest& checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException));
     void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
@@ -141,7 +120,9 @@ class SpaListener : public Listener
 SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
 : HostRecordBase(pkt, target), request(req), response()
 {
-    Listener::computeMAC(response, req.getSecret(), challenge, clen, saddr, daddr, req.getRequestString(), req.getIgnoreClientAddr());
+    size_t resp_len;
+    LibWheel::auto_array<boost::uint8_t> resp(Listener::generateResponse(*this, challenge, clen, req.getIgnoreClientAddr(), req.getRequestString(), resp_len));
+    Listener::computeMAC(response, req.getSecret(), resp.get(), resp_len);
 }
 
 const SpaRequest&
@@ -224,45 +205,6 @@ SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 
 
 /* 
-Open a port to a source host after successful authentication
-Sends a message to ipt_REMAP asking it to redirect the next connection to 
-the random target port to the requested destination port
-*/
-void 
-SpaListener::openPort(const HostRecord& host) THROW((IOException))
-{
-    struct ipt_remap remap;
-    int ret;
-    const SpaRequest& req = host.getRequest();
-
-    LibWheel::logmsg(LibWheel::logmsg_info, "Forwarding %s:%hu/%s to %s:%hu", 
-        ipv4_to_string(host.getSrcAddr()).c_str(), host.getTargetPort(), 
-        req.getProtocol().getName().c_str(), 
-        ipv4_to_string(host.getDstAddr()).c_str(), req.getPort());
-    
-    // build a remap rule
-    memset(&remap, 0, sizeof(remap));
-    remap.src_addr = htonl(host.getSrcAddr());
-    if (req.getAddr() != 0)
-        remap.dst_addr = htonl(req.getAddr());
-    else
-        remap.dst_addr = htonl(host.getDstAddr());
-    remap.remap_addr = htonl(0);
-    remap.dst_port = htons(host.getTargetPort());
-    remap.remap_port = htons(req.getPort());
-    remap.proto = req.getProtocol().getNumber();
-    remap.ttl = htons(req.getTTL());
-
-    // write the remap rule to the kernel driver
-    ret = write(remapFD, &remap, sizeof(remap));
-    if (ret == -1)
-        throw IOException(std::string("Error writing to /proc/"REMAP_PROC_FILE": ") + strerror(errno));
-    else if (ret != sizeof(remap))
-        throw IOException("Error writing to /proc/"REMAP_PROC_FILE": message truncated");
-}
-
-
-/* 
 Remove an entry from the host hash table
 */
 void 
@@ -320,65 +262,18 @@ Throws: SocketException - error sending challenge message
 void 
 SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException))
 {
-    unsigned challenge_len = sizeof(SpaChallengeHeader) + config.getChallengeBytes();
-    boost::uint8_t* challenge;
-    SpaChallengeHeader* header;
-    unsigned rand_len = config.getChallengeBytes() + BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS) + 2;
-    boost::uint8_t* rand_bytes;
+    //LibWheel::auto_array<boost::uint8_t> challenge;
+    size_t challenge_len;
     boost::uint16_t dport;
-    int ret;
-
-    // read some random data;
-    rand_bytes = new boost::uint8_t[rand_len];
-    ret = read(randomFD, rand_bytes, rand_len);
-    if (ret < static_cast<int>(rand_len)) // error reading random bytes
-        throw IOException(std::string("Error reading random data: ") + std::strerror(errno));
-
-    // create a challenge
-    challenge = new boost::uint8_t[challenge_len];
-    header = reinterpret_cast<SpaChallengeHeader*>(challenge);
-    std::memset(challenge, 0, challenge_len);
-    std::memcpy(&challenge[sizeof(SpaChallengeHeader)], rand_bytes, config.getChallengeBytes());
-    header->nonceBytes = config.getChallengeBytes();
-
-    // create a port message
-    dport = *(reinterpret_cast<boost::uint16_t*>(&rand_bytes[rand_len-2]));
-    boost::uint8_t* pad = &rand_bytes[config.getChallengeBytes()];
-    encryptPort(header->portMessage, dport, pad, req.getSecret());
-
-    // send the challenge
-    // it's not a race condition to send before creating the host record, 
-    // because responses are also handled in this thread
-    int sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
-    if (sock_fd == -1)
-        throw SocketException(std::string("Error creating socket: ") + std::strerror(errno));
-    struct sockaddr_in addr;
-    std::memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(pkt->getUdpDest());
-    addr.sin_addr.s_addr = htonl(pkt->getIpDest());
-    ret = bind(sock_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
-    if (ret == -1)
-        throw SocketException(std::string("Error binding socket: ") + std::strerror(errno));
-    addr.sin_port = htons(pkt->getUdpSource());
-    addr.sin_addr.s_addr = htonl(pkt->getIpSource());
-    ret = sendto(sock_fd, challenge, challenge_len, 0, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
-    if (ret  == -1)
-        throw IOException(std::string("Error sending challenge: ") + std::strerror(errno));
-    else if (ret != static_cast<int>(challenge_len))
-        throw IOException(std::string("Error sending challenge: message truncated"));
-    ret = ::close(sock_fd);
-    if (ret == -1)
-        throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
+    
+    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, req, challenge_len, dport));
+    sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 
     // create a record for this host
-    HostRecord hrec(pkt, dport, req, challenge+sizeof(SpaChallengeHeader), config.getChallengeBytes());
+    HostRecord hrec(pkt, dport, req, challenge.get()+sizeof(ChallengeHeader), config.getChallengeBytes());
     AddressPair haddr(hrec);
     hostTable.insert(std::make_pair(haddr, hrec));
     hostTableGC.schedule(haddr, TIMEOUT_SECS, TIMEOUT_USECS);
-
-    delete[] challenge;
-    delete[] rand_bytes;
 
     if (verbose)
         LibWheel::logmsg(LibWheel::logmsg_info, "Sent challenge, dport=%hu to %s:%hu", dport, ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
@@ -404,7 +299,7 @@ SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
         {
             try
             {
-                openPort(host);
+                openPort(host, host.getRequest());
             }
             catch (const IOException& e)
             {
@@ -639,7 +534,7 @@ main(int argc, char** argv)
         // load configuration
         config = get_config(mode, config_file);
 #ifdef DEBUG
-        config->printConfig(std::cout);
+        //config->printConfig(std::cout);
 #endif
 
         // make sure that we're running as root

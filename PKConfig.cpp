@@ -13,21 +13,21 @@ template<typename A, typename RequestPrinterType, typename C, typename D> const 
 template<typename A, typename B, typename RequestParserType, typename D> const RequestParserType Request<A, B, RequestParserType, D>::requestParser = RequestParserType();
 
 void 
-PKRequestPrinter::operator() (std::ostream& os, const PKRequestString& requestStr) const
+KnockSequencePrinter::operator() (std::ostream& os, const KnockSequence& requestStr) const
 {
     os << "request:  ";
     
-    for (PKRequestString::const_iterator i=requestStr.begin(); i!=requestStr.end(); i++)
+    for (KnockSequence::const_iterator i=requestStr.begin(); i!=requestStr.end(); i++)
     {
         os << *i << ' ';
     }
     os << std::endl;
 }
+
 void
-PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str, const Config* c) const THROW((ConfigException))
+KnockSequenceParser::operator() (KnockSequence& requestStr, const std::string& str, const Config* c) const THROW((ConfigException))
 {
     std::vector<boost::uint8_t> bytes;
-    std::vector<boost::uint16_t> plain_request;
     const PKConfig* config = dynamic_cast<const PKConfig*>(c);
 
     assert(config != NULL);
@@ -64,37 +64,10 @@ PKRequestParser::operator() (PKRequestString& requestStr, const std::string& str
             throw ConfigException(std::string("Value '") + tstr[i+1] + std::string("' out of range in element \"request\""));
         bytes.push_back((high<<4) | low);
     }
+    
+    generateKnockSequence(requestStr, bytes, config->getBasePort(), config->getBitsPerKnock());
 
-    
-    // next, convert the array of binary bytes to a simple port knock sequence
-    boost::uint32_t knock = 0;
-    unsigned bits = 0;
-    std::vector<boost::uint8_t>::iterator iter = bytes.begin();
-    
-    while (iter != bytes.end())
-    {
-        while ((bits < config->getBitsPerKnock()) && (iter != bytes.end()))
-        {
-            knock <<= 8;
-            knock |= *iter;
-            ++iter;
-            bits += 8;
-        }
-        if (bits >= config->getBitsPerKnock())
-        {
-            plain_request.push_back(knock >> (bits - config->getBitsPerKnock()));
-            bits -= config->getBitsPerKnock();
-            knock &= ((1<<bits)-1);
-        }
-    }
-    if (bits > 0)
-        plain_request.push_back(knock);
-    
-    // finally, add sequencing information and create the final request
-    for (unsigned i = 0; i < plain_request.size(); ++i)
-        requestStr.insert(config->getBasePort() + plain_request[i] + i*(1<<config->getBitsPerKnock()));
-
-    // make sure that we have a reasonable port sequence
+        // make sure that we have a reasonable port sequence
     if (requestStr.size() * config->getBitsPerKnock() < MIN_REQUEST_BITS)
         throw ConfigException("Too few knocks in element \"request\"");
     else if ((requestStr.size() * config->getBitsPerKnock() > MAX_REQUEST_BITS) || (requestStr.size() > config->getMaxKnocks()))

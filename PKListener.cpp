@@ -1,15 +1,15 @@
+#include <iterator>
 #include <csignal>
 #include <cassert>
 #include <tr1/unordered_set>
 #include <boost/cstdint.hpp>
+#include <boost/static_assert.hpp>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "PKConfig.hpp"
 #include "Listener.hpp"
 #include "NFQ.hpp"
 #include "PKListener.hpp"
 #include "Signals.hpp"
-
-#include <iostream>
 
 namespace Rknockd
 {
@@ -54,6 +54,21 @@ PKListener::HostRecord::getState() const
     return state;
 }
 
+KnockSequence& 
+PKListener::HostRecord::getResponse()
+{
+    return response;
+}
+
+
+const PKRequest&
+PKListener::HostRecord::getRequest() const
+{
+    assert(request != NULL);
+    return *request;
+}
+
+
 void
 PKListener::HostRecord::updateState(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests)
 {
@@ -78,14 +93,13 @@ PKListener::HostRecord::updateRequest(const NFQ::NfqUdpPacket* pkt, const PKConf
     // update the list of currently matched requests
     for (RequestList::iterator i=requests.begin(); i!=requests.end(); )
     {
-        PKRequestString& req = i->second;
-        PKRequestString::iterator port = req.find(pkt->getUdpDest());
+        KnockSequence& req = i->second;
+        KnockSequence::iterator port = req.find(pkt->getUdpDest());
 
         if (port == req.end())
         {
             //  we no longer match this request
             i = requests.erase(i);
-std::cout << "updateRequest(): deleting request" << std::endl;
         }
         else
         {
@@ -95,7 +109,6 @@ std::cout << "updateRequest(): deleting request" << std::endl;
             {
                 request = i->first;
                 state = CHALLENGE;
-std::cout << "updateRequest(): state = " << state << std::endl;
                 return;
             }
             ++i;
@@ -105,13 +118,12 @@ std::cout << "updateRequest(): state = " << state << std::endl;
     // check if we're matching any new requests
     for (PKConfig::RequestList::const_iterator i=crequests.begin(); i!=crequests.end(); ++i)
     {
-        const PKRequestString& req = i->getRequestString();
+        const KnockSequence& req = i->getRequestString();
         if ((requests.find(&(*i)) == requests.end()) && (req.find(pkt->getUdpDest()) != req.end()))
         {
             RequestList::iterator iter = (requests.insert(std::make_pair(&(*i), req))).first;
             iter->second.erase(pkt->getUdpDest());
             state = REQUEST;
-std::cout << "updateRequest(): adding request" << std::endl;
         }
     }
     
@@ -119,17 +131,15 @@ std::cout << "updateRequest(): adding request" << std::endl;
     if (requests.size() == 0)
     {
         state = CLOSED;
-std::cout << "updateResponse(): state = " << state << std::endl;
         return;
     }
-std::cout << "updateResponse(): state = " << state << std::endl;
 }
 
 
 void
 PKListener::HostRecord::updateResponse(const NFQ::NfqUdpPacket* pkt)
 {
-    PKResponse::iterator i = response.find(pkt->getUdpDest());
+    KnockSequence::iterator i = response.find(pkt->getUdpDest());
     if (i != response.end())
     {
         response.erase(i);
@@ -142,7 +152,6 @@ PKListener::HostRecord::updateResponse(const NFQ::NfqUdpPacket* pkt)
     {
         state = CLOSED;
     }
-std::cout << "updateResponse(): state = " << state << std::endl;
 
 }
 
@@ -153,7 +162,7 @@ PKListener::PKListener(const PKConfig& c, bool verbose_logging) THROW((IOExcepti
     const std::vector<PKRequest>& requests = c.getRequests();
     for (std::vector<PKRequest>::const_iterator i=requests.begin(); i!=requests.end(); ++i)
     {
-        for (PKRequestString::const_iterator j=i->getRequestString().begin(); j!=i->getRequestString().end(); ++j)
+        for (KnockSequence::const_iterator j=i->getRequestString().begin(); j!=i->getRequestString().end(); ++j)
             portSet.insert(*j);
     }
 
@@ -174,7 +183,6 @@ PKListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
     const NFQ::NfqUdpPacket* packet = dynamic_cast<const NFQ::NfqUdpPacket*>(p);
     assert(packet != NULL);
     
-std::cout << "got port " << packet->getUdpDest() << std::endl;
 
     // check if this port number is used in a request
     if (portSet.find(packet->getUdpDest()) != portSet.end())
@@ -195,12 +203,13 @@ std::cout << "got port " << packet->getUdpDest() << std::endl;
               case HostRecord::REQUEST:
                 break;
               case HostRecord::CHALLENGE:
-                issueChallenge(rec);
+                issueChallenge(rec, packet);
                 break;
               case HostRecord::RESPONSE:
                 break;
               case HostRecord::OPEN:
-                openPort(rec);
+                openPort(rec, rec.getRequest());
+                deleteRecord(rec);
                 break;
             }
         }
@@ -216,7 +225,6 @@ std::cout << "got port " << packet->getUdpDest() << std::endl;
     catch (const BadRequestException& e)
     {
         // port number not in any request and host not in response state
-std::cout << "Exception!" << std::endl;
     }
 }
 
@@ -232,12 +240,10 @@ PKListener::getRecord(const NFQ::NfqUdpPacket* pkt, bool in_request) THROW((BadR
         AddressPair addr(pkt);
         iter = (hostTable.insert(std::make_pair(addr, rec))).first;
         hostTableGC.schedule(addr, TIMEOUT_SECS, TIMEOUT_USECS);
-std::cout << "getRecord(): creating record" << std::endl;
     }
     else if ((in_request == false) && (iter->second.getState() != HostRecord::CHALLENGE) && (iter->second.getState() != HostRecord::RESPONSE))
     {
         hostTable.erase(iter);
-std::cout << "getRecord(): deleting record" << std::endl;
         throw BadRequestException();
     }
     return iter->second;
@@ -249,16 +255,56 @@ PKListener::deleteRecord(const HostRecord& rec)
     hostTable.erase(AddressPair(rec));
 }
 
-void 
-PKListener::issueChallenge(const HostRecord& rec) THROW((CryptoException, IOException, SocketException))
+
+template <typename InIt, typename Out>
+void
+getBytes(const InIt& begin, const InIt& end, const typename std::back_insert_iterator<Out>& o)
 {
-    // FIXME
+    // FIXME: what's the proper way to do this?
+    BOOST_STATIC_ASSERT(sizeof(typename Out::value_type) == sizeof(boost::uint8_t));
+    BOOST_STATIC_ASSERT(sizeof(typename InIt::value_type) == sizeof(boost::uint16_t));
+    
+    typename std::back_insert_iterator<Out> out = o;
+    union
+    {
+        boost::uint16_t u16;
+        boost::uint8_t u8[2];
+    } elmt;
+    
+    for (InIt i=begin; i!=end; ++i)
+    {
+        elmt.u16 = htons(*i);
+        out = std::copy(elmt.u8, elmt.u8+2, out);
+    }
 }
 
-void
-PKListener::openPort(const HostRecord& rec) THROW((IOException))
+
+void 
+PKListener::issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW((CryptoException, IOException, SocketException))
 {
-    // FIXME
+    //LibWheel::auto_array<boost::uint8_t> challenge;
+    size_t challenge_len;
+    //LibWheel::auto_array<boost::uint8_t> resp;
+    size_t resp_len;
+    boost::uint16_t dport;
+    boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> mac;
+
+    if (verbose)
+        LibWheel::logmsg(LibWheel::logmsg_info, "Good request received from %s:%hu", ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
+
+    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, rec.getRequest(), challenge_len, dport));
+    
+    sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
+
+    std::vector<boost::uint8_t> vec;
+    getBytes(rec.getRequest().getRequestString().begin(), rec.getRequest().getRequestString().end(), std::back_inserter(vec));
+    LibWheel::auto_array<boost::uint8_t> resp(generateResponse(rec, challenge.get()+sizeof(ChallengeHeader), challenge_len-sizeof(ChallengeHeader), rec.getRequest().getIgnoreClientAddr(), vec, resp_len));
+    computeMAC(mac, rec.getRequest().getSecret(), resp.get(), resp_len);
+    KnockSequenceParser::generateKnockSequence(rec.getResponse(), mac, config.getBasePort(), config.getBitsPerKnock());
+    rec.setTargetPort(dport);
+
+    if (verbose)
+        LibWheel::logmsg(LibWheel::logmsg_info, "Sent challenge, dport=%hu to %s:%hu", dport, ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
 }
 
 } // namespace Rknockd

@@ -3,9 +3,13 @@
 
     #include <stdexcept>
     #include <string>
+    #include <sstream>
     #include <queue>
+    #include <vector>
+    #include <cstddef>
     #include <tr1/unordered_map>
     #include <boost/array.hpp>
+    #include "auto_array.hpp"
     #include "Config.hpp"
     #include "NFQ.hpp"
     #include "Logmsg.hpp"
@@ -14,6 +18,8 @@
 
     namespace Rknockd
     {
+        std::string ipv4_to_string(boost::uint32_t a);
+
         class IOException : public std::runtime_error
         {
           public:
@@ -51,21 +57,6 @@
             virtual ~Listener();
             virtual void close() THROW((IOException, NFQ::NfqException));
           protected:
-            Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
-            virtual void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException)) = 0;
-            NFQ::NfqSocket sock;
-            std::string randomDevice;
-            std::string remapFile;
-            int randomFD;
-            int remapFD;
-            bool verbose;
-            
-            static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);
-            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str);
-            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const boost::uint8_t* str, size_t strlen);
-            static void encryptPort(boost::uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], boost::uint16_t port, const boost::uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException));
-            static void computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr);
-
             class HostRecordBase
             {
               protected:
@@ -83,7 +74,27 @@
                 boost::uint32_t getDstAddr() const;
                 boost::uint16_t getDstPort() const;
                 boost::uint16_t getTargetPort() const;
+                void setTargetPort(boost::uint16_t);
             };
+
+            Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
+            virtual void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException)) = 0;
+            LibWheel::auto_array<boost::uint8_t> generateChallenge(const Config& config, const RequestBase&, size_t& len, boost::uint16_t& dport) THROW((IOException, CryptoException));
+            void openPort(const HostRecordBase& host, const RequestBase& req) THROW((IOException));
+            NFQ::NfqSocket sock;
+            std::string randomDevice;
+            std::string remapFile;
+            int randomFD;
+            int remapFD;
+            bool verbose;
+            
+            static LibWheel::auto_array<boost::uint8_t> generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len);
+            static void sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const boost::uint8_t* mess, size_t len) THROW((SocketException, IOException));
+            static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);
+            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str);
+            static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const boost::uint8_t* str, size_t strlen);
+            static void encryptPort(boost::uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], boost::uint16_t port, const boost::uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException));
+            static void computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* msg, size_t msglen) THROW((CryptoException));
 
             template <typename HostTableType>
             class HostTableGC

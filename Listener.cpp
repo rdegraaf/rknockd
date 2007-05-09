@@ -17,11 +17,31 @@ namespace Rknockd
 {
 
 
-    union uint32_u
+union uint32_u
+{
+    boost::uint32_t u32;
+    boost::uint8_t u8[sizeof(boost::uint32_t)];
+};
+
+std::string 
+ipv4_to_string(boost::uint32_t a)
+{
+    union uint32_bytes
     {
         boost::uint32_t u32;
-        boost::uint8_t u8[sizeof(boost::uint32_t)];
+        boost::uint8_t u8[4];
     };
+    std::ostringstream os;
+    uint32_bytes addr;
+    
+    addr.u32 = htonl(a); // convert to big-endian
+    os << static_cast<unsigned>(addr.u8[0]) << '.' 
+       << static_cast<unsigned>(addr.u8[1]) << '.' 
+       << static_cast<unsigned>(addr.u8[2]) << '.' 
+       << static_cast<unsigned>(addr.u8[3]);
+    return os.str();
+}
+
 
 // static data members
 Listener::ListenerConstructor Listener::_listenerConstructor;
@@ -244,6 +264,12 @@ Listener::HostRecordBase::getTargetPort() const
 }
 
 
+void
+Listener::HostRecordBase::setTargetPort(boost::uint16_t port)
+{
+    targetPort = port;
+}
+
 
 /* 
 Compute the SHA1 hash of a string
@@ -312,30 +338,13 @@ Compute a MAC on a challenge
 Throws: CryptoException - if there is an error in the crypto library
 */
 void 
-Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* challenge, size_t clen, boost::uint32_t client_addr, boost::uint32_t serv_addr, const std::vector<boost::uint8_t>& request, bool ignore_client_addr)
+Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* msg, size_t msglen) THROW((CryptoException))
 {
     boost::uint8_t key[BITS_TO_BYTES(HASH_BITS)];
-    boost::uint8_t* msg;
-    size_t msglen;
-    uint32_u caddr;
-    uint32_u saddr;
     gcry_md_hd_t handle;
     gcry_error_t err;
 
-    assert(challenge != NULL);
-
-    // build the message
-    msglen = clen + sizeof(boost::uint32_t) + sizeof(boost::uint32_t) + request.size();
-    msg = new boost::uint8_t[msglen];
-    std::memcpy(msg, challenge, clen);
-    if (ignore_client_addr)
-        caddr.u32 = 0;
-    else
-        caddr.u32 = htonl(client_addr);
-    std::memcpy(msg+clen, caddr.u8, sizeof(boost::uint32_t));
-    saddr.u32 = htonl(serv_addr);
-    std::memcpy(msg+clen+sizeof(boost::uint32_t), saddr.u8, sizeof(boost::uint32_t));
-    std::copy(request.begin(), request.end(), msg+clen+2*sizeof(boost::uint32_t));
+    assert(msg != NULL);
 
     // generate the MAC key
     getHash(key, keystr);
@@ -352,7 +361,6 @@ Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf,
     std::memcpy(buf.c_array(), gcry_md_read(handle, 0), BITS_TO_BYTES(MAC_BITS));
     gcry_md_close(handle);
 
-    delete[] msg;
     memset(key, 0, sizeof(key));
 }
 
@@ -370,6 +378,130 @@ Listener::ListenerConstructor::ListenerConstructor()
         gcry_control(GCRYCTL_DISABLE_SECMEM, 0); 
     gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
 }
+
+
+LibWheel::auto_array<boost::uint8_t>
+Listener::generateChallenge(const Config& config, const RequestBase& req, size_t& challenge_len, boost::uint16_t& dport) THROW((IOException, CryptoException))
+{
+    //LibWheel::auto_array<boost::uint8_t> challenge;
+    ChallengeHeader* header;
+    unsigned rand_len;
+    //LibWheel::auto_array<boost::uint8_t> rand_bytes;
+    int ret;
+    
+    // read some random data;
+    rand_len = config.getChallengeBytes() + BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS) + 2;
+    LibWheel::auto_array<boost::uint8_t> rand_bytes(new boost::uint8_t[rand_len]);
+    ret = read(randomFD, rand_bytes.get(), rand_len);
+    if (ret < static_cast<int>(rand_len)) // error reading random bytes
+        throw IOException(std::string("Error reading random data: ") + std::strerror(errno));
+    
+    // create a challenge
+    challenge_len = sizeof(ChallengeHeader) + config.getChallengeBytes();
+    LibWheel::auto_array<boost::uint8_t> challenge(new boost::uint8_t[challenge_len]);
+    header = reinterpret_cast<ChallengeHeader*>(challenge.get());
+    std::memset(challenge.get(), 0, challenge_len);
+    std::memcpy(&(challenge.get()[sizeof(ChallengeHeader)]), rand_bytes.get(), config.getChallengeBytes());
+    header->nonceBytes = htons(config.getChallengeBytes());
+    
+    // create a port message
+    dport = *(reinterpret_cast<boost::uint16_t*>(&(rand_bytes.get()[rand_len-2])));
+    boost::uint8_t* pad = &(rand_bytes.get()[config.getChallengeBytes()]);
+    encryptPort(header->portMessage, dport, pad, req.getSecret());
+    
+    return challenge;
+}    
+
+void
+Listener::sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const boost::uint8_t* mess, size_t len) THROW((IOException, SocketException))
+{
+    int sock_fd;
+    int ret;
+    struct sockaddr_in addr;
+    
+    sock_fd = ::socket(PF_INET, SOCK_DGRAM, 0);
+    if (sock_fd == -1)
+        throw SocketException(std::string("Error creating socket: ") + std::strerror(errno));
+    
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(sport);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    ret = ::bind(sock_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (ret == -1)
+        throw SocketException(std::string("Error binding socket: ") + std::strerror(errno));
+    
+    addr.sin_port = htons(dport);
+    addr.sin_addr.s_addr = htonl(daddr);
+    ret = ::sendto(sock_fd, mess, len, 0, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (ret == -1)
+        throw IOException(std::string("Error sending challenge: ") + std::strerror(errno));
+    else if (ret != static_cast<int>(len))
+        throw IOException(std::string("Error sending challenge: message truncated"));
+
+    ret = ::close(sock_fd);
+    if (ret == -1)
+        throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
+}
+
+LibWheel::auto_array<boost::uint8_t>
+Listener::generateResponse(const HostRecordBase& rec, const boost::uint8_t* challenge, size_t clen, bool ignore_client_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len)
+{
+    uint32_u addr;
+
+    resp_len = clen + sizeof(boost::uint32_t) + sizeof(boost::uint32_t) + request.size();
+    LibWheel::auto_array<boost::uint8_t> resp(new boost::uint8_t[resp_len]);
+    std::memcpy(resp.get(), challenge, clen);
+    if (ignore_client_addr)
+        addr.u32 = 0;
+    else
+        addr.u32 = htonl(rec.getSrcAddr());
+    std::memcpy(resp.get()+clen, addr.u8, sizeof(boost::uint32_t));
+    addr.u32 = htonl(rec.getDstAddr());
+    std::memcpy(resp.get()+clen+sizeof(boost::uint32_t), addr.u8, sizeof(boost::uint32_t));
+    std::copy(request.begin(), request.end(), resp.get()+clen+2*sizeof(boost::uint32_t));
+    
+    return resp;
+}
+
+
+/*
+Open a port to a source host after successful authentication
+Sends a message to ipt_REMAP asking it to redirect the next connection to 
+the random target port to the requested destination port
+*/
+void 
+Listener::openPort(const HostRecordBase& host, const RequestBase& req) THROW((IOException))
+{
+    struct ipt_remap remap;
+    int ret;
+
+    LibWheel::logmsg(LibWheel::logmsg_info, "Forwarding %s:%hu/%s to %s:%hu", 
+        ipv4_to_string(host.getSrcAddr()).c_str(), host.getTargetPort(), 
+        req.getProtocol().getName().c_str(), 
+        ipv4_to_string(host.getDstAddr()).c_str(), req.getPort());
+    
+    // build a remap rule
+    memset(&remap, 0, sizeof(remap));
+    remap.src_addr = htonl(host.getSrcAddr());
+    if (req.getAddr() != 0)
+        remap.dst_addr = htonl(req.getAddr());
+    else
+        remap.dst_addr = htonl(host.getDstAddr());
+    remap.remap_addr = htonl(0);
+    remap.dst_port = htons(host.getTargetPort());
+    remap.remap_port = htons(req.getPort());
+    remap.proto = req.getProtocol().getNumber();
+    remap.ttl = htons(req.getTTL());
+
+    // write the remap rule to the kernel driver
+    ret = write(remapFD, &remap, sizeof(remap));
+    if (ret == -1)
+        throw IOException(std::string("Error writing to /proc/"REMAP_PROC_FILE": ") + strerror(errno));
+    else if (ret != sizeof(remap))
+        throw IOException("Error writing to /proc/"REMAP_PROC_FILE": message truncated");
+}
+
 
 
 

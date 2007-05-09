@@ -66,7 +66,7 @@
                boost::uint8_t request[]; */
         } __attribute__((__packed__));
 
-        struct SpaChallengeHeader
+        struct ChallengeHeader
         {
             uint16_t nonceBytes;
             uint16_t _pad;
@@ -74,6 +74,8 @@
             /* the "struct hack" is not allowed in C++ 
                boost::uint8_t challenge[]; */
         } __attribute__((__packed__));
+        
+        /*typedef SpaChallengeHeader PKChallengeHeader;*/
 
     #ifdef __cplusplus
     } // namespace Rknockd
