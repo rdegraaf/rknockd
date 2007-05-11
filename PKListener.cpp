@@ -292,7 +292,7 @@ PKListener::issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW(
     if (verbose)
         LibWheel::logmsg(LibWheel::logmsg_info, "Good request received from %s:%hu", ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
 
-    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, rec.getRequest(), challenge_len, dport));
+    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, rec.getRequest(), challenge_len, rec.getRequest().getProtocol(), dport));
     
     sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 

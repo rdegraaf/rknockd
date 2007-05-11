@@ -79,7 +79,7 @@
 
             Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
             virtual void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException)) = 0;
-            LibWheel::auto_array<boost::uint8_t> generateChallenge(const Config& config, const RequestBase&, size_t& len, boost::uint16_t& dport) THROW((IOException, CryptoException));
+            LibWheel::auto_array<boost::uint8_t> generateChallenge(const Config& config, const RequestBase&, size_t& len, const Protocol& proto, boost::uint16_t& dport) THROW((SocketException, IOException, CryptoException));
             void openPort(const HostRecordBase& host, const RequestBase& req) THROW((IOException));
             NFQ::NfqSocket sock;
             std::string randomDevice;
@@ -88,6 +88,7 @@
             int remapFD;
             bool verbose;
             
+            static boost::uint16_t getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketException));
             static LibWheel::auto_array<boost::uint8_t> generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len);
             static void sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const boost::uint8_t* mess, size_t len) THROW((SocketException, IOException));
             static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);

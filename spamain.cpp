@@ -266,7 +266,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
     size_t challenge_len;
     boost::uint16_t dport;
     
-    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, req, challenge_len, dport));
+    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, req, challenge_len, req.getProtocol(), dport));
     sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 
     // create a record for this host

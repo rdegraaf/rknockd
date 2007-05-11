@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <gcrypt.h>
+#include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "Config.hpp"
 #include "Listener.hpp"
 #include "NFQ.hpp"
@@ -76,7 +77,7 @@ Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((I
     if (randomFD == -1)
         throw IOException(std::string("Error opening ") + cfg.getRandomDevice() + ": " + std::strerror(errno));
 
-    remapFD = open(remap.c_str(), O_WRONLY);
+    remapFD = ::open(remap.c_str(), O_WRONLY);
     if (remapFD == -1)
         throw IOException(std::string("Error opening /proc/") + remap + ": " + std::strerror(errno));
 }
@@ -380,8 +381,57 @@ Listener::ListenerConstructor::ListenerConstructor()
 }
 
 
+boost::uint16_t
+Listener::getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketException))
+{
+    int sockfd;
+    int socktype;
+    struct sockaddr_in addr;
+    boost::uint16_t port = hint;
+    int ret;
+    
+    switch (proto.getNumber())
+    {
+        case IPPROTO_TCP:
+            socktype = SOCK_STREAM;
+            break;
+        case IPPROTO_UDP:
+            socktype = SOCK_DGRAM;
+            break;
+        default:
+            throw SocketException("Invalid protocol");
+    }
+    
+    sockfd = ::socket(PF_INET, socktype, 0);
+    if (sockfd == -1)
+        throw SocketException(std::string("Error opening socket: ") + std::strerror(errno));
+    
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    
+    for (boost::uint16_t i=0; i<=std::numeric_limits<boost::uint16_t>::max(); ++i)
+    {
+        addr.sin_port = htons(port+i);
+        ret = ::bind(sockfd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+        if (ret == 0)
+        {
+            (void)::close(sockfd);
+            return port+i;
+        }
+        else if ((ret == -1) && (errno != EADDRINUSE))
+        {
+            (void)::close(sockfd);
+            throw SocketException(std::string("Error binding socket: ") + std::strerror(errno));
+        }
+    }
+    
+    throw SocketException("No ports available");
+}
+    
+
 LibWheel::auto_array<boost::uint8_t>
-Listener::generateChallenge(const Config& config, const RequestBase& req, size_t& challenge_len, boost::uint16_t& dport) THROW((IOException, CryptoException))
+Listener::generateChallenge(const Config& config, const RequestBase& req, size_t& challenge_len, const Protocol& proto, boost::uint16_t& dport) THROW((IOException, SocketException, CryptoException))
 {
     //LibWheel::auto_array<boost::uint8_t> challenge;
     ChallengeHeader* header;
@@ -401,12 +451,12 @@ Listener::generateChallenge(const Config& config, const RequestBase& req, size_t
     LibWheel::auto_array<boost::uint8_t> challenge(new boost::uint8_t[challenge_len]);
     header = reinterpret_cast<ChallengeHeader*>(challenge.get());
     std::memset(challenge.get(), 0, challenge_len);
-    std::memcpy(&(challenge.get()[sizeof(ChallengeHeader)]), rand_bytes.get(), config.getChallengeBytes());
+    std::memcpy(&(challenge[sizeof(ChallengeHeader)]), rand_bytes.get(), config.getChallengeBytes());
     header->nonceBytes = htons(config.getChallengeBytes());
     
     // create a port message
-    dport = *(reinterpret_cast<boost::uint16_t*>(&(rand_bytes.get()[rand_len-2])));
-    boost::uint8_t* pad = &(rand_bytes.get()[config.getChallengeBytes()]);
+    dport = getPort(*(reinterpret_cast<boost::uint16_t*>(&(rand_bytes[rand_len-2]))), proto);
+    boost::uint8_t* pad = &(rand_bytes[config.getChallengeBytes()]);
     encryptPort(header->portMessage, dport, pad, req.getSecret());
     
     return challenge;
