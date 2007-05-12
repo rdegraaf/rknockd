@@ -294,14 +294,14 @@ PKListener::issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW(
 
     LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, rec.getRequest(), challenge_len, rec.getRequest().getProtocol(), dport));
     
-    sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
-
     std::vector<boost::uint8_t> vec;
     getBytes(rec.getRequest().getRequestString().begin(), rec.getRequest().getRequestString().end(), std::back_inserter(vec));
-    LibWheel::auto_array<boost::uint8_t> resp(generateResponse(rec, challenge.get()+sizeof(ChallengeHeader), challenge_len-sizeof(ChallengeHeader), rec.getRequest().getIgnoreClientAddr(), vec, resp_len));
+    LibWheel::auto_array<boost::uint8_t> resp(generateResponse(rec, challenge.get()+sizeof(ChallengeHeader), challenge_len-sizeof(ChallengeHeader), rec.getRequest().getIgnoreClientAddr(), config.getOverrideServerAddr(), vec, resp_len));
     computeMAC(mac, rec.getRequest().getSecret(), resp.get(), resp_len);
     KnockSequenceParser::generateKnockSequence(rec.getResponse(), mac, config.getBasePort(), config.getBitsPerKnock());
     rec.setTargetPort(dport);
+
+    sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 
     if (verbose)
         LibWheel::logmsg(LibWheel::logmsg_info, "Sent challenge, dport=%hu to %s:%hu", dport, ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());

@@ -54,6 +54,7 @@
             const boost::uint16_t getBasePort() const;
             const unsigned getChallengeBytes() const;
             const boost::uint16_t getNfQueueNum() const;
+            const boost::uint32_t getOverrideServerAddr() const;
             virtual void printConfig(std::ostream& os) const;
           protected:
             void readFile() THROW((ConfigException));
@@ -66,6 +67,8 @@
             unsigned challengeBytes; // the number of bytes to send in a challenge
             std::string randomDevice;     // the name of the random number device
             boost::uint16_t nfQueueNum;
+            bool overrideServerAddr;
+            boost::uint32_t serverAddr;
         };
         
         

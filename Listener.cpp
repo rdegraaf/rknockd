@@ -495,7 +495,7 @@ Listener::sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const b
 }
 
 LibWheel::auto_array<boost::uint8_t>
-Listener::generateResponse(const HostRecordBase& rec, const boost::uint8_t* challenge, size_t clen, bool ignore_client_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len)
+Listener::generateResponse(const HostRecordBase& rec, const boost::uint8_t* challenge, size_t clen, bool ignore_client_addr, boost::uint32_t override_server_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len)
 {
     uint32_u addr;
 
@@ -507,7 +507,10 @@ Listener::generateResponse(const HostRecordBase& rec, const boost::uint8_t* chal
     else
         addr.u32 = htonl(rec.getSrcAddr());
     std::memcpy(resp.get()+clen, addr.u8, sizeof(boost::uint32_t));
-    addr.u32 = htonl(rec.getDstAddr());
+    if (override_server_addr == 0)
+        addr.u32 = htonl(rec.getDstAddr());
+    else
+        addr.u32 = htonl(override_server_addr);
     std::memcpy(resp.get()+clen+sizeof(boost::uint32_t), addr.u8, sizeof(boost::uint32_t));
     std::copy(request.begin(), request.end(), resp.get()+clen+2*sizeof(boost::uint32_t));
     

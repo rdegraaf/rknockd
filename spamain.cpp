@@ -92,7 +92,7 @@ class SpaListener : public Listener
         const SpaRequest& request;
         SpaResponse response;
       public:
-        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException));
+        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, boost::uint32_t override_server_addr) THROW((CryptoException));
         const SpaRequest& getRequest() const;
         const SpaResponse& getResponse() const;
     };
@@ -117,11 +117,11 @@ class SpaListener : public Listener
     ~SpaListener();
 };
 
-SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen) THROW((CryptoException))
+SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, boost::uint32_t override_server_addr) THROW((CryptoException))
 : HostRecordBase(pkt, target), request(req), response()
 {
     size_t resp_len;
-    LibWheel::auto_array<boost::uint8_t> resp(Listener::generateResponse(*this, challenge, clen, req.getIgnoreClientAddr(), req.getRequestString(), resp_len));
+    LibWheel::auto_array<boost::uint8_t> resp(Listener::generateResponse(*this, challenge, clen, req.getIgnoreClientAddr(), override_server_addr, req.getRequestString(), resp_len));
     Listener::computeMAC(response, req.getSecret(), resp.get(), resp_len);
 }
 
@@ -270,7 +270,7 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
     sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 
     // create a record for this host
-    HostRecord hrec(pkt, dport, req, challenge.get()+sizeof(ChallengeHeader), config.getChallengeBytes());
+    HostRecord hrec(pkt, dport, req, challenge.get()+sizeof(ChallengeHeader), config.getChallengeBytes(), config.getOverrideServerAddr());
     AddressPair haddr(hrec);
     hostTable.insert(std::make_pair(haddr, hrec));
     hostTableGC.schedule(haddr, TIMEOUT_SECS, TIMEOUT_USECS);

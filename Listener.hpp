@@ -89,7 +89,7 @@
             bool verbose;
             
             static boost::uint16_t getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketException));
-            static LibWheel::auto_array<boost::uint8_t> generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len);
+            static LibWheel::auto_array<boost::uint8_t> generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, boost::uint32_t override_server_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len);
             static void sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const boost::uint8_t* mess, size_t len) THROW((SocketException, IOException));
             static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);
             static void getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str);

@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include "Config.hpp"
 
 
@@ -314,7 +316,7 @@ RequestBase::parseRequest(const xmlpp::Element* elmt, const Config* config) THRO
 
 
 Config::Config(const std::string& filename)
-: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(BITS_TO_BYTES(DEFAULT_CHALLENGE_BITS)), randomDevice(DEFAULT_RANDOM_DEVICE), nfQueueNum(0)
+: file(filename), basePort(DEFAULT_BASE_PORT), challengeBytes(BITS_TO_BYTES(DEFAULT_CHALLENGE_BITS)), randomDevice(DEFAULT_RANDOM_DEVICE), nfQueueNum(0), overrideServerAddr(false), serverAddr(0)
 {
     // we can't load the config file here because in a constructor, we don't 
     // know what subclass we are
@@ -351,6 +353,15 @@ const boost::uint16_t
 Config::getNfQueueNum() const
 {
     return nfQueueNum;
+}
+
+const boost::uint32_t
+Config::getOverrideServerAddr() const
+{
+    if (overrideServerAddr)
+        return serverAddr;
+    else
+        return 0;
 }
 
 void 
@@ -450,6 +461,18 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
             {
                 throw ConfigException("Error parsing attribute \"challenge_bytes\" of element \"rknockd\"");
             }
+        }
+        else if ((*iter)->get_name() == "server_addr") // not required
+        {
+            struct hostent* host;
+            
+            host = gethostbyname((*iter)->get_value().c_str());
+            if (host == NULL)
+                throw ConfigException("Error resolving host address in attribute \"server_addr\" of element \"rknockd\"");
+            else if ((host->h_addrtype != AF_INET) || (host->h_length != 4) || (host->h_addr_list[0] == NULL))
+                throw ConfigException("Error resolving host address in attribute \"server_addr\" of element \"rknockd\"");
+            serverAddr = ntohl(*(reinterpret_cast<boost::uint32_t*>(host->h_addr_list[0])));
+            overrideServerAddr = true;
         }
         else if ((*iter)->get_name() == "random_dev") // not required
         {

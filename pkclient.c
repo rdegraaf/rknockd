@@ -697,6 +697,7 @@ main(int argc, const char** argv)
     if (retval)
         exit(EXIT_FAILURE); /* error message already logged */
 
+    printf("Authentication complete; port = %hu\n", challenge.port);
 
     /* clean up */
     memset(&config, 0, sizeof(config));
