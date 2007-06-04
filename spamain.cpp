@@ -372,6 +372,9 @@ Prints version info
 void print_version()
 {
     std::cout << QUOTE(PROGNAME) << ": " <<  QUOTE(VERSION)
+#ifdef DEBUG
+              << " (debug build)"
+#endif
               << "\nCopyright (c) Rennie deGraaf, 2007.  All rights reserved."
               << std::endl;
 }
@@ -525,6 +528,8 @@ main(int argc, char** argv)
     Rknockd::parse_args(argc, argv, config_file, mode, make_daemon, verbose);
     
 #ifdef DEBUG
+    if ((verbose == false) || (make_daemon = true))
+        std::cerr << "This is a debug build; enabling verbose logging and disabling daemon mode" << std::endl;
     verbose = true;
     make_daemon = false;
 #endif

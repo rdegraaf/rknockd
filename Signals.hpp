@@ -1,5 +1,7 @@
 #ifndef LIBWHEEL_SIGNALS_HPP
     #define LIBWHEEL_SIGNALS_HPP
+    
+    #include <list>
     #include <string>
     #include <stdexcept>
     #include <csignal>
