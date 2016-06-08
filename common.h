@@ -1,14 +1,6 @@
 #ifndef RKNOCKD_COMMON_H
     #define RKNOCKD_COMMON_H
     
-    #ifdef __cplusplus
-        #include <boost/cstdint.hpp>
-        using boost::uint16_t;
-        using boost::uint8_t;
-    #else
-        #include <stdint.h>
-    #endif
-
     #ifdef DEBUG
         #define THROW(x) throw x
     #else
@@ -17,6 +9,8 @@
     
     #define XQUOTE(x) #x
     #define QUOTE(x) XQUOTE(x)
+    
+    #define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
     
     #define BITS_TO_BYTES(x) (((x)+7) >> 3)
 
@@ -32,7 +26,7 @@
         #define DEFAULT_MAX_KNOCKS          10
         #define DEFAULT_BITS_PER_KNOCK      8
         #define DEFAULT_CHALLENGE_BITS      80
-        #define DEFAULT_RANDOM_DEVICE       "/dev/random"
+        #define DEFAULT_RANDOM_DEVICE       "/dev/urandom"
         #define DEFAULT_TTL                 10
         #define MIN_KEY_SIZE                4
         #define MAX_KEY_SIZE                128
@@ -63,7 +57,7 @@
             uint16_t requestBytes;
             uint16_t _pad;
             /* the "struct hack" is not allowed in C++ 
-               boost::uint8_t request[]; */
+               uint8_t request[]; */
         } __attribute__((__packed__));
 
         struct ChallengeHeader
@@ -72,7 +66,7 @@
             uint16_t _pad;
             uint8_t portMessage[BITS_TO_BYTES(CIPHER_BLOCK_BITS)];
             /* the "struct hack" is not allowed in C++ 
-               boost::uint8_t challenge[]; */
+               uint8_t challenge[]; */
         } __attribute__((__packed__));
         
         /*typedef SpaChallengeHeader PKChallengeHeader;*/

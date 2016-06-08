@@ -32,7 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 /* 
-Taken from "Secure Programming Cookbook for C and C++ by Matt Messier and 
+Adapted from "Secure Programming Cookbook for C and C++ by Matt Messier and 
 John Viega, on-line source at 
 http://www.secureprogramming.com/?action=downloads&bookid=1
 Modified by Rennie deGraaf, 2005/07/22 
@@ -41,8 +41,7 @@ spc_sanitize_environment() - sanitizes system environemnt variables
 spc_sanitize_files() - closes all files other than stdin, stdout, stderr
 */
 
-#define _POSIX_SOURCE   /* fileno() */
-#define _BSD_SOURCE     /* getdtablesize() */
+//TODO: get rid of this due to incompatile licence
 
 #include <stdio.h>
 #include <stdlib.h>

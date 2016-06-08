@@ -31,9 +31,6 @@
 * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 **************************************************/
 
-#define _POSIX_SOURCE   /* for localtime_r() */
-#define _BSD_SOURCE     /* for vsyslog() */
-
 #include <syslog.h>
 #include <stdarg.h>
 #include <stdbool.h>

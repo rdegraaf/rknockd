@@ -6,14 +6,14 @@
     #include <vector>
     #include <set>
     #include <iostream>
+    #include <cstdint>
     #include <libxml++/libxml++.h>
-    #include <boost/cstdint.hpp>
     #include "common.h"
     
     namespace Rknockd
     {
-        char bintohex(boost::uint8_t c);
-        boost::uint8_t hextobin(char c);
+        char bintohex(uint8_t c);
+        uint8_t hextobin(char c);
 
         class ConfigException : public std::runtime_error
         {
@@ -51,10 +51,10 @@
             virtual ~Config();
             const std::string& getFile() const;
             const std::string& getRandomDevice() const;
-            const boost::uint16_t getBasePort() const;
-            const unsigned getChallengeBytes() const;
-            const boost::uint16_t getNfQueueNum() const;
-            const boost::uint32_t getOverrideServerAddr() const;
+            uint16_t getBasePort() const;
+            unsigned getChallengeBytes() const;
+            uint16_t getNfQueueNum() const;
+            uint32_t getOverrideServerAddr() const;
             virtual void printConfig(std::ostream& os) const;
           protected:
             void readFile() THROW((ConfigException));
@@ -63,12 +63,12 @@
             virtual void addRequest(const xmlpp::Element* elmt) THROW((ConfigException)) = 0;
             
             std::string file;       // the name of the configuration file
-            boost::uint16_t basePort;     // the low-numbered port of the knock range
+            uint16_t basePort;     // the low-numbered port of the knock range
             unsigned challengeBytes; // the number of bytes to send in a challenge
             std::string randomDevice;     // the name of the random number device
-            boost::uint16_t nfQueueNum;
+            uint16_t nfQueueNum;
             bool overrideServerAddr;
-            boost::uint32_t serverAddr;
+            uint32_t serverAddr;
         };
         
         
@@ -78,10 +78,10 @@
             RequestBase();
             virtual ~RequestBase();
             const Protocol& getProtocol() const;
-            const boost::uint16_t getPort() const;
-            const boost::uint32_t getAddr() const;
-            const boost::uint16_t getTTL() const;
-            const bool getIgnoreClientAddr() const;
+            uint16_t getPort() const;
+            uint32_t getAddr() const;
+            uint16_t getTTL() const;
+            bool getIgnoreClientAddr() const;
             const std::string getSecret() const;
             virtual void printRequest(std::ostream& os) const;
             //RequestBase& operator=(const RequestBase& req);
@@ -90,8 +90,8 @@
             virtual void parseRequestString(const std::string& str, const Config* config) THROW((ConfigException)) = 0;
             
             Protocol proto;
-            boost::uint16_t port;
-            boost::uint16_t ttl;
+            uint16_t port;
+            uint16_t ttl;
             bool ignoreClientAddr;
             std::string secret;
         };

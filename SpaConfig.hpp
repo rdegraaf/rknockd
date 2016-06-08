@@ -6,7 +6,7 @@
 
     namespace Rknockd
     {
-        typedef std::vector<boost::uint8_t> SpaRequestString;
+        typedef std::vector<uint8_t> SpaRequestString;
         
         struct SpaRequestPrinter
         {

@@ -1,8 +1,8 @@
 #include <iterator>
 #include <csignal>
 #include <cassert>
+#include <cstdint>
 #include <tr1/unordered_set>
-#include <boost/cstdint.hpp>
 #include <boost/static_assert.hpp>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "PKConfig.hpp"
@@ -156,7 +156,7 @@ PKListener::HostRecord::updateResponse(const NFQ::NfqUdpPacket* pkt)
 }
 
 PKListener::PKListener(const PKConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException))
-: Listener(c, "/proc/"REMAP_PROC_FILE, verbose_logging), config(c), hostTable(), hostTableGC(hostTable, verbose_logging), portSet()
+: Listener(c, "/proc/" REMAP_PROC_FILE, verbose_logging), config(c), hostTable(), hostTableGC(hostTable, verbose_logging), portSet()
 {
     // load all port numbers that we're interested in into portSet
     const std::vector<PKRequest>& requests = c.getRequests();
@@ -261,14 +261,14 @@ void
 getBytes(const InIt& begin, const InIt& end, const typename std::back_insert_iterator<Out>& o)
 {
     // FIXME: what's the proper way to do this?
-    BOOST_STATIC_ASSERT(sizeof(typename Out::value_type) == sizeof(boost::uint8_t));
-    BOOST_STATIC_ASSERT(sizeof(typename InIt::value_type) == sizeof(boost::uint16_t));
+    BOOST_STATIC_ASSERT(sizeof(typename Out::value_type) == sizeof(uint8_t));
+    BOOST_STATIC_ASSERT(sizeof(typename InIt::value_type) == sizeof(uint16_t));
     
     typename std::back_insert_iterator<Out> out = o;
     union
     {
-        boost::uint16_t u16;
-        boost::uint8_t u8[2];
+        uint16_t u16;
+        uint8_t u8[2];
     } elmt;
     
     for (InIt i=begin; i!=end; ++i)
@@ -282,21 +282,21 @@ getBytes(const InIt& begin, const InIt& end, const typename std::back_insert_ite
 void 
 PKListener::issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW((CryptoException, IOException, SocketException))
 {
-    //LibWheel::auto_array<boost::uint8_t> challenge;
+    //std::unique_ptr<uint8_t[]> challenge;
     size_t challenge_len;
-    //LibWheel::auto_array<boost::uint8_t> resp;
+    //std::unique_ptr<uint8_t[]> resp;
     size_t resp_len;
-    boost::uint16_t dport;
-    boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> mac;
+    uint16_t dport;
+    std::array<uint8_t, BITS_TO_BYTES(MAC_BITS)> mac;
 
     if (verbose)
         LibWheel::logmsg(LibWheel::logmsg_info, "Good request received from %s:%hu", ipv4_to_string(pkt->getIpSource()).c_str(), pkt->getUdpSource());
 
-    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, rec.getRequest(), challenge_len, rec.getRequest().getProtocol(), dport));
+    std::unique_ptr<uint8_t[]> challenge(generateChallenge(config, rec.getRequest(), challenge_len, rec.getRequest().getProtocol(), dport));
     
-    std::vector<boost::uint8_t> vec;
+    std::vector<uint8_t> vec;
     getBytes(rec.getRequest().getRequestString().begin(), rec.getRequest().getRequestString().end(), std::back_inserter(vec));
-    LibWheel::auto_array<boost::uint8_t> resp(generateResponse(rec, challenge.get()+sizeof(ChallengeHeader), challenge_len-sizeof(ChallengeHeader), rec.getRequest().getIgnoreClientAddr(), config.getOverrideServerAddr(), vec, resp_len));
+    std::unique_ptr<uint8_t[]> resp(generateResponse(rec, challenge.get()+sizeof(ChallengeHeader), challenge_len-sizeof(ChallengeHeader), rec.getRequest().getIgnoreClientAddr(), config.getOverrideServerAddr(), vec, resp_len));
     computeMAC(mac, rec.getRequest().getSecret(), resp.get(), resp_len);
     KnockSequenceParser::generateKnockSequence(rec.getResponse(), mac, config.getBasePort(), config.getBitsPerKnock());
     rec.setTargetPort(dport);

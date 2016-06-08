@@ -12,7 +12,7 @@ SpaRequestPrinter::operator() (std::ostream& os, const SpaRequestString& request
 {
     os << "request:  0x";
     
-    for (std::vector<boost::uint8_t>::const_iterator i=requestStr.begin(); i!=requestStr.end(); i++)
+    for (std::vector<uint8_t>::const_iterator i=requestStr.begin(); i!=requestStr.end(); i++)
     {
         os << bintohex((*i)>>4) << bintohex((*i)&0xf);
     }
@@ -25,8 +25,8 @@ template<typename A, typename B, typename RequestParserType, typename D> const R
 void
 SpaRequestParser::operator() (SpaRequestString& requestStr, const std::string& str, const Config*) const THROW((ConfigException))
 {
-    boost::uint8_t high;
-    boost::uint8_t low;
+    uint8_t high;
+    uint8_t low;
     unsigned i = 0; // current index into string
     std::string tstr = boost::trim_copy(str);
 
@@ -37,7 +37,7 @@ SpaRequestParser::operator() (SpaRequestString& requestStr, const std::string& s
     {
         // string length is odd; get the first character
         low = hextobin(tstr[i]);
-        if (low == std::numeric_limits<boost::uint8_t>::max())
+        if (low == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
         requestStr.push_back(low);
         i++;
@@ -48,9 +48,9 @@ SpaRequestParser::operator() (SpaRequestString& requestStr, const std::string& s
     {
         high = hextobin(tstr[i]);
         low = hextobin(tstr[i+1]);
-        if (high == std::numeric_limits<boost::uint8_t>::max())
+        if (high == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
-        else if  (low == std::numeric_limits<boost::uint8_t>::max())
+        else if  (low == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i+1] + std::string("' out of range in element \"request\""));
         requestStr.push_back((high<<4) | low);
     }

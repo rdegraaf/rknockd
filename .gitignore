@@ -1,0 +1,6 @@
+pkclient
+spaclient
+spaserver
+*.o
+a.out
+

@@ -4,8 +4,9 @@
     #include <exception>
     #include <stdexcept>
     #include <string>
+    #include <cstdint>
+    #include <memory>
     #include <boost/utility.hpp>
-    #include <boost/cstdint.hpp>
     #include <boost/function.hpp>
     #include <netinet/ip.h>
     #include <netinet/tcp.h>
@@ -14,6 +15,7 @@
 
     extern "C"
     {
+    #include <linux/netfilter.h>
     #include <libnetfilter_queue/libnetfilter_queue.h>
     }
 
@@ -37,15 +39,19 @@
         class NfqSocket : public boost::noncopyable
         {
           public:
-            typedef boost::uint16_t QueueNum;
-            enum CopyMode {NONE, META, PACKET};
+            typedef u_int16_t QueueNum;
+            enum class CopyMode : u_int8_t {
+                NONE = NFQNL_COPY_NONE,
+                META = NFQNL_COPY_META,
+                PACKET = NFQNL_COPY_PACKET
+            };
 
             NfqSocket();
             NfqSocket(QueueNum num) THROW((NfqException));
             ~NfqSocket();
             void connect(QueueNum num) THROW((NfqException));
             void setCopyMode(CopyMode mode, int range=65535) THROW((NfqException));
-            NfqPacket* recvPacket(bool noblock=false) THROW((NfqException));
+            std::unique_ptr<NfqPacket> recvPacket(bool noblock=false) THROW((NfqException));
             void waitForPacket() THROW((NfqException));
             void waitForPacket(int func_fd, boost::function<void()> func);
             void sendResponse(NfqPacket* pkt) THROW((NfqException));
@@ -56,7 +62,7 @@
             CopyMode copyMode;                  // the amount of packet data to copy from kernelspace
             struct nfq_handle* nfqHandle;       // handle to the libnetfilter_queue library
             struct nfq_q_handle* queueHandle;   // handle to a specific libnetfilter_queue queue
-            NfqPacket* pkt;                     // packet being received; used by recvPacket()
+            std::unique_ptr<NfqPacket> pkt;     // packet being received; used by recvPacket()
         };
 
         // Allowing copies of NfqPackets to be made would break the responseSent 
@@ -70,38 +76,42 @@
         class NfqPacket : public boost::noncopyable
         {
           public:
-            enum Verdict {ACCEPT, DROP, REPEAT};
+            enum class Verdict : u_int32_t{
+                ACCEPT = NF_ACCEPT,
+                DROP = NF_DROP,
+                REPEAT = NF_REPEAT
+            };
             virtual ~NfqPacket();
-            boost::uint32_t getId() const;
-            boost::uint16_t getHwProtocol() const;
-            boost::uint8_t getNfHook() const;
-            boost::uint32_t getNfMark() const;
+            std::uint32_t getId() const;
+            std::uint16_t getHwProtocol() const;
+            std::uint8_t getNfHook() const;
+            std::uint32_t getNfMark() const;
             const struct timeval& getTimestamp() const;
-            boost::uint32_t getIndev() const;
-            boost::uint32_t getPhysIndev() const;
-            boost::uint32_t getOutdev() const;
-            boost::uint32_t getPhysOutdev() const;
-            const boost::uint8_t (&getHwSource(boost::uint16_t& addrlen) const)[8];
-            const boost::uint8_t* getPacket(size_t& size) const;
+            std::uint32_t getIndev() const;
+            std::uint32_t getPhysIndev() const;
+            std::uint32_t getOutdev() const;
+            std::uint32_t getPhysOutdev() const;
+            const std::uint8_t (&getHwSource(std::uint16_t& addrlen) const)[8];
+            const std::uint8_t* getPacket(std::size_t& size) const;
             void setVerdict(Verdict v);
-            void setNfMark(boost::uint32_t mark);
+            void setNfMark(std::uint32_t mark);
           protected:
-            NfqPacket(struct nfq_data* nfa);
+            NfqPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);
             static int createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
-            boost::uint8_t* packet;
-            size_t packetLen;
+            std::unique_ptr<std::uint8_t[]> packet;
+            std::size_t packetLen;
           private:
             friend void NfqSocket::connect(NfqSocket::QueueNum); // allow connect to access createPacket
             friend void NfqSocket::sendResponse(NfqPacket*); // allow sendResponse to access responseSent
             struct nfqnl_msg_packet_hdr nfInfo; // 
-            boost::uint32_t nfMark;
+            std::uint32_t nfMark;
             struct timeval timestamp;
-            boost::uint32_t indev;
-            boost::uint32_t physIndev;
-            boost::uint32_t outdev;
-            boost::uint32_t physOutdev;
+            std::uint32_t indev;
+            std::uint32_t physIndev;
+            std::uint32_t outdev;
+            std::uint32_t physOutdev;
             struct nfqnl_msg_packet_hw hwSource;
-            boost::uint32_t nfVerdict;
+            std::uint32_t nfVerdict;
             bool verdictSet;
             bool markSet;
             bool responseSent;
@@ -110,44 +120,44 @@
         class NfqIpPacket : public NfqPacket
         {
           public:
-            boost::uint32_t getIpSource() const;
-            boost::uint32_t getIpDest() const;
-            const struct iphdr* getIpHeader(size_t& size) const;
-            const boost::uint8_t* getIpPayload(size_t& size) const;
+            std::uint32_t getIpSource() const;
+            std::uint32_t getIpDest() const;
+            const struct iphdr* getIpHeader(std::size_t& size) const;
+            const std::uint8_t* getIpPayload(std::size_t& size) const;
             virtual ~NfqIpPacket() {}
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
-            NfqIpPacket(struct nfq_data* nfa);
-            inline unsigned getIpHeaderOffset() const {return 0;}
-            inline unsigned getIpPayloadOffset() const {return (reinterpret_cast<struct iphdr*>(packet))->ihl*4;}
+            NfqIpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);
+            inline std::size_t getIpHeaderOffset() const {return 0;}
+            inline std::size_t getIpPayloadOffset() const {return (reinterpret_cast<struct iphdr*>(packet.get()))->ihl*4;}
         };
 
         class NfqTcpPacket : public NfqIpPacket
         {
           public:
-            boost::uint16_t getTcpSource() const;
-            boost::uint16_t getTcpDest() const;
-            const struct tcphdr* getTcpHeader(size_t& size) const;
-            const boost::uint8_t* getTcpPayload(size_t& size) const;
+            std::uint16_t getTcpSource() const;
+            std::uint16_t getTcpDest() const;
+            const struct tcphdr* getTcpHeader(std::size_t& size) const;
+            const std::uint8_t* getTcpPayload(std::size_t& size) const;
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
-            NfqTcpPacket(struct nfq_data* nfa);
-            inline unsigned getTcpHeaderOffset() const {return getIpPayloadOffset();}
-            inline unsigned getTcpPayloadOffset() const {unsigned base = getTcpHeaderOffset(); return base + (reinterpret_cast<struct tcphdr*>(packet+base))->doff*4;}
+            NfqTcpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);
+            inline std::size_t getTcpHeaderOffset() const {return getIpPayloadOffset();}
+            inline std::size_t getTcpPayloadOffset() const {std::size_t base = getTcpHeaderOffset(); return base + (reinterpret_cast<struct tcphdr*>(packet.get()+base))->doff*4;}
         };
 
         class NfqUdpPacket : public NfqIpPacket
         {
           public:
-            boost::uint16_t getUdpSource() const;
-            boost::uint16_t getUdpDest() const;
-            const struct udphdr* getUdpHeader(size_t& size) const;
-            const boost::uint8_t* getUdpPayload(size_t& size) const;
+            std::uint16_t getUdpSource() const;
+            std::uint16_t getUdpDest() const;
+            const struct udphdr* getUdpHeader(std::size_t& size) const;
+            const std::uint8_t* getUdpPayload(std::size_t& size) const;
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
-            NfqUdpPacket(struct nfq_data* nfa);
-            inline unsigned getUdpHeaderOffset() const {return getIpPayloadOffset();}
-            inline unsigned getUdpPayloadOffset() const {return getUdpHeaderOffset() + sizeof(struct udphdr);}
+            NfqUdpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);
+            inline std::size_t getUdpHeaderOffset() const {return getIpPayloadOffset();}
+            inline std::size_t getUdpPayloadOffset() const {return getUdpHeaderOffset() + sizeof(struct udphdr);}
         };
 
     }

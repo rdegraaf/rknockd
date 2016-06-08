@@ -12,10 +12,6 @@
 #include <sys/select.h>
 #include "NFQ.hpp"
 
-extern "C" 
-{
-#include <linux/netfilter.h>
-}
 
 namespace NFQ
 {
@@ -25,23 +21,21 @@ NfqException::NfqException(const std::string& d)
 {}
 
 NfqSocket::NfqSocket()
-: isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
+: isConnected(false), queueNum(), copyMode(CopyMode::META), nfqHandle(NULL), queueHandle(NULL), pkt(nullptr)
 {}
 
 NfqSocket::NfqSocket(QueueNum num) THROW((NfqException))
-: isConnected(false), queueNum(), copyMode(META), nfqHandle(NULL), queueHandle(NULL), pkt(NULL)
+: isConnected(false), queueNum(), copyMode(CopyMode::META), nfqHandle(NULL), queueHandle(NULL), pkt(nullptr)
 {
     connect(num);
 }
 
 NfqSocket::~NfqSocket()
 {
-    try
-    {
+    try {
         close();
+    } catch (const NfqException& e) {
     }
-    catch (const NfqException& e)
-    {}
 }
 
 // not thread-safe
@@ -70,7 +64,7 @@ NfqSocket::connect(QueueNum num) THROW((NfqException))
         throw NfqException("Error creating queue");
     
     // set default copy mode
-    setCopyMode(META, 0);
+    setCopyMode(CopyMode::META, 0);
 
     isConnected = true;
     queueNum = num;
@@ -80,69 +74,47 @@ NfqSocket::connect(QueueNum num) THROW((NfqException))
 void 
 NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 {
-    static boost::uint8_t mode_table[] = 
-    {
-        NFQNL_COPY_NONE,
-        NFQNL_COPY_META,
-        NFQNL_COPY_PACKET
-    };
-
-    if (nfq_set_mode(queueHandle, mode_table[mode], range) < 0)
+    if (nfq_set_mode(queueHandle, u_int8_t(mode), range) < 0)
         throw NfqException("Error setting copy mode");
 }
 
 
-NfqPacket* 
+std::unique_ptr<NfqPacket>
 NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 {
-    char* buf;
-    struct nlmsghdr nlh;
-    struct sockaddr_nl peer;
-    socklen_t addrlen;
-    int fd;
-    int status;
-    int flags;
-    
     // NOTE: this may drop messages if more than one message is queued.
     // Can that even happen?
     
     // get a message header
-    fd = nfq_fd(nfqHandle);
-    addrlen = sizeof(peer);
-    flags = MSG_PEEK | (noblock ? MSG_DONTWAIT : 0);
-    status = recvfrom(fd, reinterpret_cast<void*>(&nlh), sizeof(nlh), flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
-    if (status <= 0)
-    {
+    struct nlmsghdr nlh;
+    struct sockaddr_nl peer;
+    int fd = nfq_fd(nfqHandle);
+    socklen_t addrlen = sizeof(peer);
+    int flags = MSG_PEEK | (noblock ? MSG_DONTWAIT : 0);
+    ssize_t status = recvfrom(fd, reinterpret_cast<void*>(&nlh), sizeof(nlh), flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
+    if (status <= 0) {
         throw NfqException(strerror(errno));
     }
-    if ((status != sizeof(nlh)) || (addrlen != sizeof(peer)) || (peer.nl_pid != 0) || (nlh.nlmsg_pid != 0))
-    {
+    if ((status != sizeof(nlh)) || (addrlen != sizeof(peer)) || (peer.nl_pid != 0) || (nlh.nlmsg_pid != 0)) {
         throw NfqException(strerror(EPROTO));
     }
 
     // read packet
-    buf = new char[nlh.nlmsg_len];
+    std::unique_ptr<char[]> buf(new char[nlh.nlmsg_len]);
     flags = noblock ? MSG_DONTWAIT : MSG_WAITALL;
-    status = recvfrom(fd, reinterpret_cast<void*>(buf), nlh.nlmsg_len, flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
-    if (status <= 0)
-    {
-        delete[] buf;
+    status = recvfrom(fd, reinterpret_cast<void*>(buf.get()), nlh.nlmsg_len, flags, reinterpret_cast<struct sockaddr*>(&peer), &addrlen);
+    if (status <= 0) {
         throw NfqException(strerror(errno));
     }
-    if ((static_cast<unsigned>(status) != (nlh.nlmsg_len)) || (addrlen != sizeof(peer)) || (peer.nl_pid != 0) || (nlh.nlmsg_flags & MSG_TRUNC))
-    {
-        delete[] buf;
+    if ((static_cast<unsigned>(status) != (nlh.nlmsg_len)) || (addrlen != sizeof(peer)) || (peer.nl_pid != 0) || (nlh.nlmsg_flags & MSG_TRUNC)) {
         throw NfqException(strerror(EPROTO));
     }
     
-    if (nfq_handle_packet(nfqHandle, buf, nlh.nlmsg_len) < 0)
-    {
-        delete[] buf;
+    if (nfq_handle_packet(nfqHandle, buf.get(), nlh.nlmsg_len) < 0) {
         throw NfqException("Error parsing packet");
     }
         
-    delete[] buf;
-    return pkt;
+    return std::move(pkt);
 }
 
 
@@ -150,13 +122,10 @@ void
 NfqSocket::waitForPacket() THROW((NfqException))
 {
     fd_set fds;
-    int ret;
-    
     FD_ZERO(&fds);
     FD_SET(nfq_fd(nfqHandle), &fds);
-    ret = select(nfq_fd(nfqHandle)+1, &fds, NULL, NULL, NULL);
-    if (ret != 1)
-    {
+    int ret = select(nfq_fd(nfqHandle)+1, &fds, NULL, NULL, NULL);
+    if (ret != 1) {
         throw NfqException(std::string("Error waiting for packet: ") + std::strerror(errno));
     }
     return;
@@ -165,49 +134,40 @@ void
 NfqSocket::waitForPacket(int func_fd, boost::function<void()> func)
 {
     fd_set fds;
-    int max_fd;
     int ret;
-    
-    max_fd = (func_fd > nfq_fd(nfqHandle)) ? func_fd : nfq_fd(nfqHandle);
-    while (1)
-    {
+    int max_fd = (func_fd > nfq_fd(nfqHandle)) ? func_fd : nfq_fd(nfqHandle);
+    while (1) {
         FD_ZERO(&fds);
         FD_SET(nfq_fd(nfqHandle), &fds);
         FD_SET(func_fd, &fds);
-        do
-        {
+        do {
             ret = select(max_fd+1, &fds, NULL, NULL, NULL);
         } while ((ret == -1) && (errno == EINTR));
-        if (ret == -1)
-        {
+        if (ret == -1) {
             throw NfqException(std::string("Error waiting for packet: ") + std::strerror(errno));
-        }
-        else if (FD_ISSET(func_fd, &fds))
-        {
+        } else if (FD_ISSET(func_fd, &fds)) {
             func();
-            if (ret == 2)
+            if (ret == 2) {
                 return;
-        }
-        else
+            }
+        } else {
             return;
+        }
     }
 }
-    
-    
+
 
 void
 NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
 {
-    int status;
-    
     // make sure that a response hasn't already been sent
-    if (pkt->responseSent == false)
-    {
+    if (pkt->responseSent == false) {
         if (!pkt->verdictSet)
             throw NfqException("Verdict not set");
-    
+
+        int status;
         if (pkt->markSet)
-            status = nfq_set_verdict_mark(queueHandle, pkt->getId(), pkt->nfVerdict, pkt->nfMark, 0, NULL);
+            status = nfq_set_verdict2(queueHandle, pkt->getId(), pkt->nfVerdict, pkt->nfMark, 0, NULL);
         else
             status = nfq_set_verdict(queueHandle, pkt->getId(), pkt->nfVerdict, 0, NULL);
     
@@ -218,12 +178,11 @@ NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
     }
 }
 
-// not thread-safe
+//TODO not thread-safe
 void
 NfqSocket::close() THROW((NfqException))
 {
-    if (isConnected)
-    {
+    if (isConnected) {
         // unbind from queue
         if (nfq_destroy_queue(queueHandle) < 0)
             throw NfqException("Error disconnecting from queue");
@@ -241,56 +200,40 @@ NfqSocket::close() THROW((NfqException))
 int 
 NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data *nfa, void *data)
 {
-    NfqPacket** pkt = reinterpret_cast<NfqPacket**>(data);
-    unsigned psize;
-    struct iphdr* iph;
-    char* ptr;
-    
     // get the payload and determine what it is
-    //psize = static_cast<unsigned>(nfq_get_payload(nfa, reinterpret_cast<char**>(&iph)));
-    psize = static_cast<unsigned>(nfq_get_payload(nfa, &ptr));
-    iph = reinterpret_cast<struct iphdr*>(ptr);
-    if ((psize >= 20) && (iph->version == 4))
-    {
+    std::uint8_t* payload;
+    //TODO: handle an error return
+    std::size_t psize = static_cast<std::size_t>(nfq_get_payload(nfa, &payload));
+    NfqPacket** pkt = reinterpret_cast<NfqPacket**>(data);
+    if ((psize >= sizeof(struct iphdr)) && (reinterpret_cast<struct iphdr*>(payload)->version == 4)) {
         // assume IPv4 with full header present
-        if ((psize >= (iph->ihl*4 + sizeof(struct tcphdr))) && (iph->protocol == 6))
-        {
+        struct iphdr* iph = reinterpret_cast<struct iphdr*>(payload);
+        if ((psize >= (iph->ihl*4 + sizeof(struct tcphdr))) && (iph->protocol == IPPROTO_TCP)) {
             // assume TCP with full header present
-            *pkt = new NfqTcpPacket(nfa);
-        }
-        else if ((psize >= (iph->ihl*4 + sizeof(struct udphdr))) && (iph->protocol == 17))
-        {
+            *pkt = new NfqTcpPacket(nfa, payload, psize);
+        } else if ((psize >= (iph->ihl*4 + sizeof(struct udphdr))) && (iph->protocol == IPPROTO_UDP)) {
             // assume UDP with full header present
-            *pkt = new NfqUdpPacket(nfa);
-        }
-        else
-        {
+            *pkt = new NfqUdpPacket(nfa, payload, psize);
+        } else {
             // some other IP protocol
-            *pkt = new NfqIpPacket(nfa);
+            *pkt = new NfqIpPacket(nfa, payload, psize);
         }
-    }
-    else
-    {
+    } else {
         // not able to determine the type of the payload
-        *pkt = new NfqPacket(nfa);
+        *pkt = new NfqPacket(nfa, payload, psize);
     }
 
     return 0;
 }
 
-NfqPacket::NfqPacket(struct nfq_data* nfa)
-: packet(NULL), packetLen(0), nfInfo(), nfMark(0), timestamp(), indev(0), physIndev(0), outdev(0), physOutdev(0), hwSource(), nfVerdict(0), verdictSet(false), markSet(false), responseSent(false)
+NfqPacket::NfqPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize)
+: packet(new std::uint8_t[psize]), packetLen(psize), nfInfo(), nfMark(0), timestamp(), indev(0), physIndev(0), outdev(0), physOutdev(0), hwSource(), nfVerdict(0), verdictSet(false), markSet(false), responseSent(false)
 {
-    struct nfqnl_msg_packet_hw* shw;
-    char* ptr;
-    int ret;
-    
     // copy message contents into this object
     std::memcpy(&nfInfo, nfq_get_msg_packet_hdr(nfa), sizeof(nfInfo));
     nfMark = nfq_get_nfmark(nfa);
-    ret = nfq_get_timestamp(nfa, &timestamp);
-    if (ret != 0)
-    {
+    int ret = nfq_get_timestamp(nfa, &timestamp);
+    if (ret != 0) {
         timestamp.tv_sec = 0;
         timestamp.tv_usec = 0;
     }
@@ -298,39 +241,32 @@ NfqPacket::NfqPacket(struct nfq_data* nfa)
     physIndev = nfq_get_physindev(nfa);
     outdev = nfq_get_outdev(nfa);
     physOutdev = nfq_get_physoutdev(nfa);
+    struct nfqnl_msg_packet_hw* shw;
     shw = nfq_get_packet_hw(nfa);
-    if (shw != NULL)
-    {
+    if (shw != NULL) {
         std::memcpy(&hwSource, shw, sizeof(hwSource));
-    }
-    else
-    {
+    } else {
         std::memset(&hwSource, 0, sizeof(hwSource));
     }
-    ret = nfq_get_payload(nfa, &ptr);
-    if (ret > 0)
-    {
-        packet = new boost::uint8_t[ret];
-        std::memcpy(packet, ptr, ret);
-        packetLen = ret;
+    if ((psize > 0) && (nullptr != payload)) {
+        std::memcpy(packet.get(), payload, psize);
     }
 }
 
 NfqPacket::~NfqPacket()
 {
     assert(responseSent == true);
-    delete[] packet;
 }
 
 // returns the ID assigned to the packet by Netfilter
-boost::uint32_t 
+std::uint32_t 
 NfqPacket::getId() const
 {
     return ntohl(nfInfo.packet_id);
 }
 
 // returns the level 3 protocol number??
-boost::uint16_t
+std::uint16_t
 NfqPacket::getHwProtocol() const
 {
     return ntohs(nfInfo.hw_protocol);
@@ -338,14 +274,14 @@ NfqPacket::getHwProtocol() const
 
 // returns the Netfilter hook number 
 // see NF_IP_LOCAL_IN, etc. in <linux/netfilter_ipv4.h>?
-boost::uint8_t
+std::uint8_t
 NfqPacket::getNfHook() const
 {
     return nfInfo.hook;
 }
 
 // returns the current Netfilter mark on this packet, or 0 if not known
-boost::uint32_t
+std::uint32_t
 NfqPacket::getNfMark() const
 {
     return nfMark;
@@ -361,7 +297,7 @@ NfqPacket::getTimestamp() const
 // returns the index of the device on which the packet was received.  If the
 // index is 0, the packet was locally generated or the input interface is no 
 // longer known (ie. POSTROUTING?)
-boost::uint32_t
+std::uint32_t
 NfqPacket::getIndev() const
 {
     return indev;
@@ -370,7 +306,7 @@ NfqPacket::getIndev() const
 // returns the index of the physical device on which the packet was received.  
 // If the index is 0, the packet was locally generated or the input interface is
 // no longer known (ie. POSTROUTING?)
-boost::uint32_t
+std::uint32_t
 NfqPacket::getPhysIndev() const
 {
     return physIndev;
@@ -379,7 +315,7 @@ NfqPacket::getPhysIndev() const
 // returns the index of the device on which the packet will be sent.  If the
 // index is 0, the packet is destined for localhost or the output interface is
 // not yet known (ie. PREROUTING?)
-boost::uint32_t
+std::uint32_t
 NfqPacket::getOutdev() const
 {
     return outdev;
@@ -388,7 +324,7 @@ NfqPacket::getOutdev() const
 // returns the index of the physical device on which the packet will be sent. 
 // If the index is 0, the packet is destined for localhost or the output
 // interface is not yet known (ie. PREROUTING?)
-boost::uint32_t
+std::uint32_t
 NfqPacket::getPhysOutdev() const
 {
     return physOutdev;
@@ -397,8 +333,8 @@ NfqPacket::getPhysOutdev() const
 // returns the source hardware address (such as an ethernet MAC address) of the 
 // packet, or all zeroes if not known.  The destination hardware address will 
 // not be known until after POSTROUTING and a successful ARP request.
-// (The return type is a const reference to boost::uint8_t[8].)
-const boost::uint8_t (&NfqPacket::getHwSource(boost::uint16_t& addrlen) const)[8]
+// (The return type is a const reference to uint8_t[8].)
+const std::uint8_t (&NfqPacket::getHwSource(std::uint16_t& addrlen) const)[8]
 {
     addrlen = ntohs(hwSource.hw_addrlen);
     return hwSource.hw_addr;
@@ -408,131 +344,125 @@ const boost::uint8_t (&NfqPacket::getHwSource(boost::uint16_t& addrlen) const)[8
 // mode:    NONE    - a null pointer will be returned
 //          META    - only packet headers will be returned???
 //          PACKET  - the entire packet will be returned
-const boost::uint8_t*
-NfqPacket::getPacket(size_t& size) const
+const std::uint8_t*
+NfqPacket::getPacket(std::size_t& size) const
 {
     size = packetLen;
-    return packet;
+    return packet.get();
 }
-
 
 
 void 
 NfqPacket::setVerdict(Verdict v)
 {
-    static boost::uint32_t verdict_table[] = 
-    {
-        NF_ACCEPT,
-        NF_DROP,
-        NF_REPEAT
-    };
-
-    nfVerdict = verdict_table[v];
+    nfVerdict = u_int32_t(v);
     verdictSet = true;
 }
 
 void 
-NfqPacket::setNfMark(boost::uint32_t mark)
+NfqPacket::setNfMark(std::uint32_t mark)
 {
     nfMark = mark;
     markSet = true;
 }
 
 
-NfqIpPacket::NfqIpPacket(struct nfq_data* nfa)
-: NfqPacket(nfa)
-{}
+NfqIpPacket::NfqIpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize)
+: NfqPacket(nfa, payload, psize)
+{
+    assert((nullptr != packet) && (0 != packetLen));
+}
 
 const struct iphdr* 
-NfqIpPacket::getIpHeader(size_t& size) const
+NfqIpPacket::getIpHeader(std::size_t& size) const
 {
-    unsigned offset = getIpHeaderOffset();
+    std::size_t offset = getIpHeaderOffset();
     size = getIpPayloadOffset() - offset;
-    return reinterpret_cast<struct iphdr*>(packet + offset);
+    return reinterpret_cast<struct iphdr*>(packet.get() + offset);
 }
 
-const boost::uint8_t* 
-NfqIpPacket::getIpPayload(size_t& size) const
+const std::uint8_t* 
+NfqIpPacket::getIpPayload(std::size_t& size) const
 {
-    unsigned offset = getIpPayloadOffset();
+    std::size_t offset = getIpPayloadOffset();
     size = packetLen - offset;
-    return packet + offset;
+    return packet.get() + offset;
 }
 
-boost::uint32_t
+std::uint32_t
 NfqIpPacket::getIpSource() const
 {
-    return ntohl((reinterpret_cast<struct iphdr*>(packet+getIpHeaderOffset()))->saddr);
+    return ntohl((reinterpret_cast<struct iphdr*>(packet.get()+getIpHeaderOffset()))->saddr);
 }
-    
-boost::uint32_t
+
+std::uint32_t
 NfqIpPacket::getIpDest() const
 {
-    return ntohl((reinterpret_cast<struct iphdr*>(packet+getIpHeaderOffset()))->daddr);
+    return ntohl((reinterpret_cast<struct iphdr*>(packet.get()+getIpHeaderOffset()))->daddr);
 }
-    
-NfqTcpPacket::NfqTcpPacket(struct nfq_data* nfa)
-: NfqIpPacket(nfa)
+
+NfqTcpPacket::NfqTcpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize)
+: NfqIpPacket(nfa, payload, psize)
 {}
 
 const struct tcphdr* 
-NfqTcpPacket::getTcpHeader(size_t& size) const
+NfqTcpPacket::getTcpHeader(std::size_t& size) const
 {
-    unsigned offset = getTcpHeaderOffset();
+    std::size_t offset = getTcpHeaderOffset();
     size = getTcpPayloadOffset() - offset;
-    return reinterpret_cast<struct tcphdr*>(packet + offset);
+    return reinterpret_cast<struct tcphdr*>(packet.get() + offset);
 }
 
-const boost::uint8_t* 
-NfqTcpPacket::getTcpPayload(size_t& size) const
+const std::uint8_t* 
+NfqTcpPacket::getTcpPayload(std::size_t& size) const
 {
-    unsigned offset = getTcpPayloadOffset();
+    std::size_t offset = getTcpPayloadOffset();
     size = packetLen - offset;
-    return packet + offset;
+    return packet.get() + offset;
 }
 
-boost::uint16_t
+std::uint16_t
 NfqTcpPacket::getTcpSource() const
 {
-    return ntohs((reinterpret_cast<struct tcphdr*>(packet+getTcpHeaderOffset()))->source);
+    return ntohs((reinterpret_cast<struct tcphdr*>(packet.get()+getTcpHeaderOffset()))->source);
 }
 
-boost::uint16_t
+std::uint16_t
 NfqTcpPacket::getTcpDest() const
 {
-    return ntohs((reinterpret_cast<struct tcphdr*>(packet+getTcpHeaderOffset()))->dest);
+    return ntohs((reinterpret_cast<struct tcphdr*>(packet.get()+getTcpHeaderOffset()))->dest);
 }
 
-NfqUdpPacket::NfqUdpPacket(struct nfq_data* nfa)
-: NfqIpPacket(nfa)
+NfqUdpPacket::NfqUdpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize)
+: NfqIpPacket(nfa, payload, psize)
 {}
 
 const struct udphdr* 
-NfqUdpPacket::getUdpHeader(size_t& size) const
+NfqUdpPacket::getUdpHeader(std::size_t& size) const
 {
-    unsigned offset = getUdpHeaderOffset();
+    std::size_t offset = getUdpHeaderOffset();
     size = getUdpPayloadOffset() - offset;
-    return reinterpret_cast<struct udphdr*>(packet + offset);
+    return reinterpret_cast<struct udphdr*>(packet.get() + offset);
 }
 
-const boost::uint8_t* 
-NfqUdpPacket::getUdpPayload(size_t& size) const
+const std::uint8_t* 
+NfqUdpPacket::getUdpPayload(std::size_t& size) const
 {
-    unsigned offset = getUdpPayloadOffset();
+    std::size_t offset = getUdpPayloadOffset();
     size = packetLen - offset;
-    return packet + offset;
+    return packet.get() + offset;
 }
 
-boost::uint16_t
+std::uint16_t
 NfqUdpPacket::getUdpSource() const
 {
-    return ntohs((reinterpret_cast<struct udphdr*>(packet+getUdpHeaderOffset()))->source);
+    return ntohs((reinterpret_cast<struct udphdr*>(packet.get()+getUdpHeaderOffset()))->source);
 }
 
-boost::uint16_t
+std::uint16_t
 NfqUdpPacket::getUdpDest() const
 {
-    return ntohs((reinterpret_cast<struct udphdr*>(packet+getUdpHeaderOffset()))->dest);
+    return ntohs((reinterpret_cast<struct udphdr*>(packet.get()+getUdpHeaderOffset()))->dest);
 }
 
 } // namespace NFQ

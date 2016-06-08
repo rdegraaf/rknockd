@@ -3,7 +3,7 @@
     
     #include <set>
     #include <stdexcept>
-    #include <boost/cstdint.hpp>
+    #include <cstdint>
     #include <boost/lexical_cast.hpp>
     #include <boost/static_assert.hpp>
     #include <libxml++/libxml++.h>
@@ -11,7 +11,7 @@
 
     namespace Rknockd
     {
-        typedef std::set<boost::uint16_t> KnockSequence;
+        typedef std::set<uint16_t> KnockSequence;
         
         struct KnockSequencePrinter
         {
@@ -23,7 +23,7 @@
             void operator() (KnockSequence& req, const std::string& str, const Config* config) const THROW((ConfigException));
 
             template <typename Container>
-            static void generateKnockSequence(KnockSequence& seq, const Container& cont, boost::uint16_t base_port, unsigned bits_per_knock) THROW((std::out_of_range));
+            static void generateKnockSequence(KnockSequence& seq, const Container& cont, uint16_t base_port, unsigned bits_per_knock) THROW((std::out_of_range));
         };
         
         class PKConfig; // forward declaration
@@ -32,13 +32,13 @@
         {
           public:
             PKRequest(const xmlpp::Element* elmt, const PKConfig& config) THROW((ConfigException));
-            const std::vector<boost::uint16_t>& getKnocks() const;
-            const std::set<boost::uint16_t>& getEncodedKnocks() const;
+            const std::vector<uint16_t>& getKnocks() const;
+            const std::set<uint16_t>& getEncodedKnocks() const;
             void printRequest(std::ostream& os) const;
           private:
             void parseRequestString(const std::string& str, const Config* config) THROW((ConfigException));
-            std::vector<boost::uint16_t> knocks;
-            std::set<boost::uint16_t> encodedKnocks;
+            std::vector<uint16_t> knocks;
+            std::set<uint16_t> encodedKnocks;
 
         };*/
         typedef Request<KnockSequence, KnockSequencePrinter, KnockSequenceParser, PKConfig> PKRequest;
@@ -50,14 +50,14 @@
             typedef std::vector<PKRequest> RequestList;
             PKConfig(const std::string& filename) THROW((ConfigException));
             virtual ~PKConfig();
-            const boost::uint8_t getMaxKnocks() const;
-            const unsigned getBitsPerKnock() const;
+            uint8_t getMaxKnocks() const;
+            unsigned getBitsPerKnock() const;
             const RequestList& getRequests() const;
             void printConfig(std::ostream& os) const;
           private:
             void parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException));
             void addRequest(const xmlpp::Element* elmt) THROW((ConfigException));
-            boost::uint8_t maxKnocks;
+            uint8_t maxKnocks;
             unsigned bitsPerKnock;
             std::vector<PKRequest> requests;
       
@@ -66,7 +66,7 @@
 
         template <typename Container>
         void
-        KnockSequenceParser::generateKnockSequence(KnockSequence& seq, const Container& cont, boost::uint16_t base_port, unsigned bits_per_knock) THROW((std::out_of_range))
+        KnockSequenceParser::generateKnockSequence(KnockSequence& seq, const Container& cont, uint16_t base_port, unsigned bits_per_knock) THROW((std::out_of_range))
         {
             unsigned bits = 0;
             unsigned knock = 0;
@@ -74,7 +74,7 @@
             int count=0;
 
             assert(bits_per_knock <= 16);
-            BOOST_STATIC_ASSERT(sizeof(typename Container::value_type) == sizeof(boost::uint8_t));
+            BOOST_STATIC_ASSERT(sizeof(typename Container::value_type) == sizeof(uint8_t));
 
             for (typename Container::const_iterator iter=cont.begin(); iter!=cont.end(); )
             {

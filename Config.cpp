@@ -16,7 +16,7 @@ namespace Rknockd
 {
 
 char
-bintohex(boost::uint8_t c)
+bintohex(uint8_t c)
 {
     static char hex_table[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',};
     if (c >= 16)
@@ -24,7 +24,7 @@ bintohex(boost::uint8_t c)
     return hex_table[c];
 }
 
-boost::uint8_t
+uint8_t
 hextobin(char c)
 {
     switch (c)
@@ -150,26 +150,26 @@ RequestBase::getProtocol() const
     return proto;
 }
 
-const boost::uint16_t 
+uint16_t 
 RequestBase::getPort() const
 {
     return port;
 }
 
-const boost::uint32_t 
+uint32_t 
 RequestBase::getAddr() const
 {
     // FIXME: option not implemented
     return 0;
 }
 
-const boost::uint16_t 
+uint16_t 
 RequestBase::getTTL() const
 {
     return ttl;
 }
 
-const bool
+bool
 RequestBase::getIgnoreClientAddr() const
 {
     return ignoreClientAddr;
@@ -223,7 +223,7 @@ RequestBase::parseRequest(const xmlpp::Element* elmt, const Config* config) THRO
         {
             try
             {
-                port = boost::lexical_cast<boost::uint16_t>(std::string((*iter)->get_value()));
+                port = boost::lexical_cast<uint16_t>(std::string((*iter)->get_value()));
                 have_port = true;
             }
             catch (boost::bad_lexical_cast& e)
@@ -266,7 +266,7 @@ RequestBase::parseRequest(const xmlpp::Element* elmt, const Config* config) THRO
         {
             try
             {
-                ttl = boost::lexical_cast<boost::uint16_t>(std::string((*iter)->get_value()));
+                ttl = boost::lexical_cast<uint16_t>(std::string((*iter)->get_value()));
                 if (ttl < MIN_TTL)
                     throw ConfigException("TTL too low in element \"request\"");
                 else if (ttl > MAX_TTL)
@@ -337,25 +337,25 @@ Config::getRandomDevice() const
     return randomDevice;
 }
 
-const boost::uint16_t 
+uint16_t 
 Config::getBasePort() const
 {
     return basePort;
 }
 
-const unsigned 
+unsigned 
 Config::getChallengeBytes() const
 {
     return challengeBytes;
 }
 
-const boost::uint16_t
+uint16_t
 Config::getNfQueueNum() const
 {
     return nfQueueNum;
 }
 
-const boost::uint32_t
+uint32_t
 Config::getOverrideServerAddr() const
 {
     if (overrideServerAddr)
@@ -432,7 +432,7 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
         {
             try
             {
-                nfQueueNum = boost::lexical_cast<boost::uint16_t>(std::string((*iter)->get_value()));
+                nfQueueNum = boost::lexical_cast<uint16_t>(std::string((*iter)->get_value()));
                 have_queue_num = true;
             }
             catch (boost::bad_lexical_cast& e)
@@ -444,7 +444,7 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
         {
             try
             {
-                basePort = boost::lexical_cast<boost::uint16_t>(std::string((*iter)->get_value()));
+                basePort = boost::lexical_cast<uint16_t>(std::string((*iter)->get_value()));
             }
             catch (boost::bad_lexical_cast& e)
             {
@@ -471,7 +471,7 @@ Config::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
                 throw ConfigException("Error resolving host address in attribute \"server_addr\" of element \"rknockd\"");
             else if ((host->h_addrtype != AF_INET) || (host->h_length != 4) || (host->h_addr_list[0] == NULL))
                 throw ConfigException("Error resolving host address in attribute \"server_addr\" of element \"rknockd\"");
-            serverAddr = ntohl(*(reinterpret_cast<boost::uint32_t*>(host->h_addr_list[0])));
+            serverAddr = ntohl(*(reinterpret_cast<uint32_t*>(host->h_addr_list[0])));
             overrideServerAddr = true;
         }
         else if ((*iter)->get_name() == "random_dev") // not required

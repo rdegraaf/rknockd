@@ -27,7 +27,7 @@ KnockSequencePrinter::operator() (std::ostream& os, const KnockSequence& request
 void
 KnockSequenceParser::operator() (KnockSequence& requestStr, const std::string& str, const Config* c) const THROW((ConfigException))
 {
-    std::vector<boost::uint8_t> bytes;
+    std::vector<uint8_t> bytes;
     const PKConfig* config = dynamic_cast<const PKConfig*>(c);
 
     assert(config != NULL);
@@ -35,8 +35,8 @@ KnockSequenceParser::operator() (KnockSequence& requestStr, const std::string& s
     // FIXME: this is overly complicated
 
     // first, parse the input string into an array of binary bytes
-    boost::uint8_t high;
-    boost::uint8_t low;
+    uint8_t high;
+    uint8_t low;
     unsigned i = 0; // current index into string
     std::string tstr = boost::trim_copy(str);
 
@@ -47,7 +47,7 @@ KnockSequenceParser::operator() (KnockSequence& requestStr, const std::string& s
     {
         // string length is odd; get the first character
         low = hextobin(tstr[i]);
-        if (low == std::numeric_limits<boost::uint8_t>::max())
+        if (low == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
         bytes.push_back(low);
         i++;
@@ -58,9 +58,9 @@ KnockSequenceParser::operator() (KnockSequence& requestStr, const std::string& s
     {
         high = hextobin(tstr[i]);
         low = hextobin(tstr[i+1]);
-        if (high == std::numeric_limits<boost::uint8_t>::max())
+        if (high == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i] + std::string("' out of range in element \"request\""));
-        else if  (low == std::numeric_limits<boost::uint8_t>::max())
+        else if  (low == std::numeric_limits<uint8_t>::max())
             throw ConfigException(std::string("Value '") + tstr[i+1] + std::string("' out of range in element \"request\""));
         bytes.push_back((high<<4) | low);
     }
@@ -86,13 +86,13 @@ PKConfig::PKConfig(const std::string& filename) THROW((ConfigException))
 PKConfig::~PKConfig()
 {}
 
-const boost::uint8_t
+uint8_t
 PKConfig::getMaxKnocks() const
 {
     return maxKnocks;
 }
 
-const unsigned 
+unsigned 
 PKConfig::getBitsPerKnock() const
 {
     return bitsPerKnock;
@@ -132,7 +132,7 @@ PKConfig::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
     Config::parseRknockdAttrs(elmt);
     
     const xmlpp::Element::AttributeList& attrs = elmt->get_attributes();
-    boost::uint16_t max_knocks; // for some reason, you can't lexical_cast to uint8_t
+    uint16_t max_knocks; // for some reason, you can't lexical_cast to uint8_t
     
     // check all attributes
     for(xmlpp::Element::AttributeList::const_iterator iter = attrs.begin(); iter != attrs.end(); ++iter)
@@ -141,7 +141,7 @@ PKConfig::parseRknockdAttrs(const xmlpp::Element* elmt) THROW((ConfigException))
         {
             try
             {
-                max_knocks = boost::lexical_cast<boost::uint16_t>((std::string)(*iter)->get_value());
+                max_knocks = boost::lexical_cast<uint16_t>((std::string)(*iter)->get_value());
                 if (max_knocks > 256)
                     throw ConfigException("Value for attribute \"max_knocks\" of element \"rknocks\" is out of range");
                 else

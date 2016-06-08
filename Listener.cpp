@@ -2,7 +2,7 @@
 #include <string>
 #include <cstring>
 #include <cerrno>
-#include <boost/cstdint.hpp>
+#include <cstdint>
 #include <unistd.h>
 #include <fcntl.h>
 #include <gcrypt.h>
@@ -20,17 +20,17 @@ namespace Rknockd
 
 union uint32_u
 {
-    boost::uint32_t u32;
-    boost::uint8_t u8[sizeof(boost::uint32_t)];
+    uint32_t u32;
+    uint8_t u8[sizeof(uint32_t)];
 };
 
 std::string 
-ipv4_to_string(boost::uint32_t a)
+ipv4_to_string(uint32_t a)
 {
     union uint32_bytes
     {
-        boost::uint32_t u32;
-        boost::uint8_t u8[4];
+        uint32_t u32;
+        uint8_t u8[4];
     };
     std::ostringstream os;
     uint32_bytes addr;
@@ -71,7 +71,7 @@ SocketException::SocketException(const std::string& s)
 Listener::Listener(const Config& cfg, const std::string& remap, bool v) THROW((IOException, NFQ::NfqException))
 : sock(cfg.getNfQueueNum()), randomDevice(cfg.getRandomDevice()), remapFile(remap), randomFD(), remapFD(), verbose(v)
 {
-    sock.setCopyMode(NFQ::NfqSocket::PACKET);
+    sock.setCopyMode(NFQ::NfqSocket::CopyMode::PACKET);
     
     randomFD = ::open(cfg.getRandomDevice().c_str(), O_RDONLY);
     if (randomFD == -1)
@@ -114,18 +114,16 @@ Listener::operator() ()
             try
             {
                 sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
-                NFQ::NfqPacket* packet = sock.recvPacket(true);
+                std::unique_ptr<NFQ::NfqPacket> packet = sock.recvPacket(true);
 
                 // set the verdict first, so that we don't keep the kernel waiting
-                packet->setVerdict(NFQ::NfqPacket::DROP);
-                sock.sendResponse(packet);
+                packet->setVerdict(NFQ::NfqPacket::Verdict::DROP);
+                sock.sendResponse(packet.get());
 /*#ifdef DEBUG
                 printPacketInfo(packet, std::cout);
 #endif*/
                 // handle the packet
-                handlePacket(packet);
-
-                delete packet;
+                handlePacket(packet.get());
             }
             catch (const NFQ::NfqException& e)
             {
@@ -221,7 +219,7 @@ Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt)
 {}
 
 
-Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target)
+Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, uint16_t target)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target)
 {}
 
@@ -230,35 +228,35 @@ Listener::HostRecordBase::~HostRecordBase()
 {}
 
 
-boost::uint32_t 
+uint32_t 
 Listener::HostRecordBase::getSrcAddr() const
 {
     return saddr;
 }
 
 
-boost::uint16_t 
+uint16_t 
 Listener::HostRecordBase::getSrcPort() const
 {
     return sport;
 }
 
 
-boost::uint32_t
+uint32_t
 Listener::HostRecordBase::getDstAddr() const
 {
     return daddr;
 }
 
 
-boost::uint16_t 
+uint16_t 
 Listener::HostRecordBase::getDstPort() const
 {
     return dport;
 }
 
 
-boost::uint16_t 
+uint16_t 
 Listener::HostRecordBase::getTargetPort() const
 {
     return targetPort;
@@ -266,7 +264,7 @@ Listener::HostRecordBase::getTargetPort() const
 
 
 void
-Listener::HostRecordBase::setTargetPort(boost::uint16_t port)
+Listener::HostRecordBase::setTargetPort(uint16_t port)
 {
     targetPort = port;
 }
@@ -276,7 +274,7 @@ Listener::HostRecordBase::setTargetPort(boost::uint16_t port)
 Compute the SHA1 hash of a string
 */
 void 
-Listener::getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str)
+Listener::getHash(uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str)
 {
     gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str.c_str(), str.length());    
 }
@@ -285,7 +283,7 @@ Listener::getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::strin
 /* Compute the SHA1 hash of a buffer
 */
 void 
-Listener::getHash(boost::uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const boost::uint8_t* str, size_t strlen)
+Listener::getHash(uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const uint8_t* str, size_t strlen)
 {
     gcry_md_hash_buffer(GCRY_MD_SHA1, buf, str, strlen);    
 }
@@ -296,9 +294,9 @@ Build an struct PortMessage and encrypt it with AES-128-ECB
 Throws: CryptoException - if there is an error in the crypto library
 */
 void 
-Listener::encryptPort(boost::uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], boost::uint16_t port, const boost::uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException))
+Listener::encryptPort(uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], uint16_t port, const uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException))
 {
-    boost::uint8_t hash[BITS_TO_BYTES(HASH_BITS)];
+    uint8_t hash[BITS_TO_BYTES(HASH_BITS)];
     struct PortMessage mess;
     gcry_error_t err;
     gcry_cipher_hd_t handle;
@@ -310,7 +308,7 @@ Listener::encryptPort(boost::uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], boos
     // generate the plaintext message
     mess.port = htons(port);
     std::memcpy(&mess.pad, pad, BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS));
-    getHash(hash, reinterpret_cast<boost::uint8_t*>(&mess), offsetof(PortMessage, hash));
+    getHash(hash, reinterpret_cast<uint8_t*>(&mess), offsetof(PortMessage, hash));
     std::memcpy(&mess.hash, hash, BITS_TO_BYTES(PORT_MESSAGE_HASH_BITS));
 
     // generate the encryption key
@@ -339,9 +337,9 @@ Compute a MAC on a challenge
 Throws: CryptoException - if there is an error in the crypto library
 */
 void 
-Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const boost::uint8_t* msg, size_t msglen) THROW((CryptoException))
+Listener::computeMAC(std::array<uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf, const std::string& keystr, const uint8_t* msg, size_t msglen) THROW((CryptoException))
 {
-    boost::uint8_t key[BITS_TO_BYTES(HASH_BITS)];
+    uint8_t key[BITS_TO_BYTES(HASH_BITS)];
     gcry_md_hd_t handle;
     gcry_error_t err;
 
@@ -359,7 +357,7 @@ Listener::computeMAC(boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)>& buf,
         throw CryptoException(std::string("Error setting HMAC key: ") + gcry_strerror(err));
     gcry_md_write(handle, msg, msglen);
     gcry_md_final(handle);
-    std::memcpy(buf.c_array(), gcry_md_read(handle, 0), BITS_TO_BYTES(MAC_BITS));
+    std::memcpy(buf.data(), gcry_md_read(handle, 0), BITS_TO_BYTES(MAC_BITS));
     gcry_md_close(handle);
 
     memset(key, 0, sizeof(key));
@@ -381,13 +379,13 @@ Listener::ListenerConstructor::ListenerConstructor()
 }
 
 
-boost::uint16_t
-Listener::getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketException))
+uint16_t
+Listener::getPort(uint16_t hint, const Protocol& proto) THROW((SocketException))
 {
     int sockfd;
     int socktype;
     struct sockaddr_in addr;
-    boost::uint16_t port = hint;
+    uint16_t port = hint;
     int ret;
     
     switch (proto.getNumber())
@@ -410,7 +408,7 @@ Listener::getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketExce
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     
-    for (boost::uint16_t i=0; i<=std::numeric_limits<boost::uint16_t>::max(); ++i)
+    for (uint16_t i=0; i<=std::numeric_limits<uint16_t>::max(); ++i)
     {
         addr.sin_port = htons(port+i);
         ret = ::bind(sockfd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
@@ -430,40 +428,40 @@ Listener::getPort(boost::uint16_t hint, const Protocol& proto) THROW((SocketExce
 }
     
 
-LibWheel::auto_array<boost::uint8_t>
-Listener::generateChallenge(const Config& config, const RequestBase& req, size_t& challenge_len, const Protocol& proto, boost::uint16_t& dport) THROW((IOException, SocketException, CryptoException))
+std::unique_ptr<uint8_t[]>
+Listener::generateChallenge(const Config& config, const RequestBase& req, size_t& challenge_len, const Protocol& proto, uint16_t& dport) THROW((IOException, SocketException, CryptoException))
 {
-    //LibWheel::auto_array<boost::uint8_t> challenge;
+    //std::unique_ptr<uint8_t[]> challenge;
     ChallengeHeader* header;
     unsigned rand_len;
-    //LibWheel::auto_array<boost::uint8_t> rand_bytes;
+    //std::unique_ptr<uint8_t[]> rand_bytes;
     int ret;
     
     // read some random data;
     rand_len = config.getChallengeBytes() + BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS) + 2;
-    LibWheel::auto_array<boost::uint8_t> rand_bytes(new boost::uint8_t[rand_len]);
+    std::unique_ptr<uint8_t[]> rand_bytes(new uint8_t[rand_len]);
     ret = read(randomFD, rand_bytes.get(), rand_len);
     if (ret < static_cast<int>(rand_len)) // error reading random bytes
         throw IOException(std::string("Error reading random data: ") + std::strerror(errno));
     
     // create a challenge
     challenge_len = sizeof(ChallengeHeader) + config.getChallengeBytes();
-    LibWheel::auto_array<boost::uint8_t> challenge(new boost::uint8_t[challenge_len]);
+    std::unique_ptr<uint8_t[]> challenge(new uint8_t[challenge_len]);
     header = reinterpret_cast<ChallengeHeader*>(challenge.get());
     std::memset(challenge.get(), 0, challenge_len);
     std::memcpy(&(challenge[sizeof(ChallengeHeader)]), rand_bytes.get(), config.getChallengeBytes());
     header->nonceBytes = htons(config.getChallengeBytes());
     
     // create a port message
-    dport = getPort(*(reinterpret_cast<boost::uint16_t*>(&(rand_bytes[rand_len-2]))), proto);
-    boost::uint8_t* pad = &(rand_bytes[config.getChallengeBytes()]);
+    dport = getPort(*(reinterpret_cast<uint16_t*>(&(rand_bytes[rand_len-2]))), proto);
+    uint8_t* pad = &(rand_bytes[config.getChallengeBytes()]);
     encryptPort(header->portMessage, dport, pad, req.getSecret());
     
     return challenge;
 }    
 
 void
-Listener::sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const boost::uint8_t* mess, size_t len) THROW((IOException, SocketException))
+Listener::sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const uint8_t* mess, size_t len) THROW((IOException, SocketException))
 {
     int sock_fd;
     int ret;
@@ -494,25 +492,25 @@ Listener::sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const b
         throw SocketException(std::string("Error closing socket: ") + std::strerror(errno));
 }
 
-LibWheel::auto_array<boost::uint8_t>
-Listener::generateResponse(const HostRecordBase& rec, const boost::uint8_t* challenge, size_t clen, bool ignore_client_addr, boost::uint32_t override_server_addr, const std::vector<boost::uint8_t>& request, std::size_t& resp_len)
+std::unique_ptr<uint8_t[]>
+Listener::generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, uint32_t override_server_addr, const std::vector<uint8_t>& request, std::size_t& resp_len)
 {
     uint32_u addr;
 
-    resp_len = clen + sizeof(boost::uint32_t) + sizeof(boost::uint32_t) + request.size();
-    LibWheel::auto_array<boost::uint8_t> resp(new boost::uint8_t[resp_len]);
+    resp_len = clen + sizeof(uint32_t) + sizeof(uint32_t) + request.size();
+    std::unique_ptr<uint8_t[]> resp(new uint8_t[resp_len]);
     std::memcpy(resp.get(), challenge, clen);
     if (ignore_client_addr)
         addr.u32 = 0;
     else
         addr.u32 = htonl(rec.getSrcAddr());
-    std::memcpy(resp.get()+clen, addr.u8, sizeof(boost::uint32_t));
+    std::memcpy(resp.get()+clen, addr.u8, sizeof(uint32_t));
     if (override_server_addr == 0)
         addr.u32 = htonl(rec.getDstAddr());
     else
         addr.u32 = htonl(override_server_addr);
-    std::memcpy(resp.get()+clen+sizeof(boost::uint32_t), addr.u8, sizeof(boost::uint32_t));
-    std::copy(request.begin(), request.end(), resp.get()+clen+2*sizeof(boost::uint32_t));
+    std::memcpy(resp.get()+clen+sizeof(uint32_t), addr.u8, sizeof(uint32_t));
+    std::copy(request.begin(), request.end(), resp.get()+clen+2*sizeof(uint32_t));
     
     return resp;
 }
@@ -550,9 +548,9 @@ Listener::openPort(const HostRecordBase& host, const RequestBase& req) THROW((IO
     // write the remap rule to the kernel driver
     ret = write(remapFD, &remap, sizeof(remap));
     if (ret == -1)
-        throw IOException(std::string("Error writing to /proc/"REMAP_PROC_FILE": ") + strerror(errno));
+        throw IOException(std::string("Error writing to /proc/" REMAP_PROC_FILE ": ") + strerror(errno));
     else if (ret != sizeof(remap))
-        throw IOException("Error writing to /proc/"REMAP_PROC_FILE": message truncated");
+        throw IOException("Error writing to /proc/" REMAP_PROC_FILE ": message truncated");
 }
 
 

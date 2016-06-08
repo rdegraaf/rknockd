@@ -48,7 +48,7 @@ struct spa_challenge
  Returns: a string containing the line.  Must be freed with free()
  Effects: I/O
 */ 
-static char* 
+__attribute__((__unused__)) static char* 
 getLine(FILE* file, int stripnl)
 {
     char* ptr = NULL;
@@ -248,7 +248,7 @@ get_config_cmdl(struct spa_config* config, const int argc, const char** argv)
 }
 
 static int
-get_config_term(struct spa_config* config)
+get_config_term(struct spa_config* UNUSED(config))
 {
     fprintf(stderr, "Error: interactive mode not yet implemented\n");
     return -1;
@@ -390,6 +390,7 @@ receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_co
 {
     uint8_t buf[sizeof(struct ChallengeHeader)+BITS_TO_BYTES(MAX_CHALLENGE_BITS)];
     int retval;
+    ssize_t bytes;
     struct timeval timeout;
     
     assert(challenge != NULL);
@@ -406,8 +407,8 @@ receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_co
     }
     
     /* receive the message */
-    retval = recv(sock, buf, sizeof(buf), 0);
-    if (retval == -1)
+    bytes = recv(sock, buf, sizeof(buf), 0);
+    if (bytes == -1)
     {
         if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
             fprintf(stderr, "Timeout waiting for server response\n");
@@ -417,12 +418,19 @@ receive_challenge(int sock, struct spa_challenge* challenge, const struct spa_co
     }
 
     /* parse the message */    
-    challenge->nonce_len = ntohs(((struct ChallengeHeader*)buf)->nonceBytes);
-    if (retval != (int)(sizeof(struct ChallengeHeader)+challenge->nonce_len))
+    if ((bytes < 0) || ((size_t)bytes < sizeof(struct ChallengeHeader)))
     {
         fprintf(stderr, "Error receiving challenge: message truncated\n");
         return -1;
     }
+    struct ChallengeHeader *header = (struct ChallengeHeader*)buf;
+    uint16_t nonce_len = ntohs(header->nonceBytes);
+    if (bytes != (int)(sizeof(struct ChallengeHeader)+nonce_len))
+    {
+        fprintf(stderr, "Error receiving challenge: message truncated\n");
+        return -1;
+    }
+    challenge->nonce_len = nonce_len;
     memcpy(challenge->nonce, buf+sizeof(struct ChallengeHeader), challenge->nonce_len);
     retval = decrypt_port(&challenge->port, buf+offsetof(struct ChallengeHeader, portMessage), config->key, config->key_len);
     if (retval)

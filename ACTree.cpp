@@ -3,8 +3,8 @@
 #include <string>
 #include <iostream>
 #include <stdexcept>
+#include <cstdint>
 #include <tr1/unordered_map>
-#include <boost/cstdint.hpp>
 #include "common.h"
 
 // Note: this implementation doesn't allow more than one result at a time
@@ -193,12 +193,12 @@ std::cout << "  matched " << *(state->match) << std::endl;
 
 int main()
 {
-    ACTree<boost::uint16_t, std::string> tree;
-    const ACTree<boost::uint16_t, std::string>::ACNode* state;
+    ACTree<uint16_t, std::string> tree;
+    const ACTree<uint16_t, std::string>::ACNode* state;
     const std::string* str;
-    std::vector<boost::uint16_t> vec1;
-    std::vector<boost::uint16_t> vec2;
-    std::vector<boost::uint16_t> vec3;
+    std::vector<uint16_t> vec1;
+    std::vector<uint16_t> vec2;
+    std::vector<uint16_t> vec3;
     std::string str1 = "123";
     std::string str2 = "124";
     std::string str3 = "312";

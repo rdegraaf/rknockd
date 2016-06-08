@@ -120,12 +120,12 @@ namespace LibWheel
 
 int main()
 {
-    LibWheel::Trie<boost::uint16_t, std::string> tree;
+    LibWheel::Trie<uint16_t, std::string> tree;
     const std::string* str;
-    std::vector<boost::uint16_t> vec1;
-    std::vector<boost::uint16_t> vec2;
-    std::vector<boost::uint16_t> vec3;
-    std::vector<boost::uint16_t> vec4;
+    std::vector<uint16_t> vec1;
+    std::vector<uint16_t> vec2;
+    std::vector<uint16_t> vec3;
+    std::vector<uint16_t> vec4;
     std::string str1 = "123";
     std::string str2 = "124";
     std::string str3 = "312";

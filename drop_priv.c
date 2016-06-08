@@ -25,8 +25,6 @@
 * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 **************************************************/
 
-#define _BSD_SOURCE /* for setgroups(), setreuid(), setregid(), setegid(), seteuid() */
-
 #include <pwd.h>
 #include <grp.h>
 #include <sys/types.h>

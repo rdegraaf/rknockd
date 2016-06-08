@@ -4,9 +4,9 @@
     #include <set>
     #include <exception>
     #include <stdexcept>
+    #include <cstdint>
     #include <tr1/unordered_set>
     #include <tr1/unordered_map>
-    #include <boost/cstdint.hpp>
     #include "Listener.hpp"
     #include "NFQ.hpp"
     #include "PKConfig.hpp"
@@ -25,17 +25,17 @@
           
             struct AddressPair
             {
-                boost::uint32_t saddr;
-                boost::uint32_t daddr;
-                boost::uint16_t sport;
+                uint32_t saddr;
+                uint32_t daddr;
+                uint16_t sport;
                 AddressPair(const NFQ::NfqUdpPacket* pkt);
                 AddressPair(const Listener::HostRecordBase& host);
             };
 
             struct AddressPairHash
             {
-                std::tr1::hash<boost::uint32_t> uhash;
-                std::tr1::hash<boost::uint16_t> shash;
+                std::tr1::hash<uint32_t> uhash;
+                std::tr1::hash<uint16_t> shash;
                 std::size_t operator()(const AddressPair& a) const;
             };
             struct AddressPairEqual
@@ -66,7 +66,7 @@
             };
           
             typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
-            typedef std::tr1::unordered_set<boost::uint16_t> PortSet;
+            typedef std::tr1::unordered_set<uint16_t> PortSet;
 
             const PKConfig& config;
             HostTable hostTable;

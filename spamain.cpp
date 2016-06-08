@@ -14,22 +14,22 @@ then these will need to be converted to synchronous signal handlers.
 // FIXME: auto_ptr
 
 #define PROGNAME spaserver
-#define VERSION 0.1
+#define VERSION 0.2
 
 #include <iostream>
 #include <iomanip>
 #include <stdexcept>
 #include <map>
 #include <vector>
+#include <array>
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
 #include <cstddef>
 #include <cctype>
+#include <cstdint>
 #include <tr1/unordered_map>
-#include <boost/array.hpp>
-#include <boost/cstdint.hpp>
 #include <gcrypt.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -67,18 +67,18 @@ class SpaListener : public Listener
   private:
     struct AddressPair
     {
-        boost::uint32_t saddr;
-        boost::uint32_t daddr;
-        boost::uint16_t sport;
-        boost::uint16_t dport;
+        uint32_t saddr;
+        uint32_t daddr;
+        uint16_t sport;
+        uint16_t dport;
         AddressPair(const NFQ::NfqUdpPacket* pkt);
         AddressPair(const Listener::HostRecordBase& host);
     };
 
     struct AddressPairHash
     {
-        std::tr1::hash<boost::uint32_t> uhash;
-        std::tr1::hash<boost::uint16_t> shash;
+        std::tr1::hash<uint32_t> uhash;
+        std::tr1::hash<uint16_t> shash;
         std::size_t operator()(const AddressPair& a) const;
     };
     struct AddressPairEqual
@@ -86,19 +86,19 @@ class SpaListener : public Listener
         bool operator() (const AddressPair& a, const AddressPair& b) const;
     };
             
-    typedef boost::array<boost::uint8_t, BITS_TO_BYTES(MAC_BITS)> SpaResponse;
+    typedef std::array<uint8_t, BITS_TO_BYTES(MAC_BITS)> SpaResponse;
     class HostRecord : public HostRecordBase
     {
         const SpaRequest& request;
         SpaResponse response;
       public:
-        HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, boost::uint32_t override_server_addr) THROW((CryptoException));
+        HostRecord(const NFQ::NfqUdpPacket* pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException));
         const SpaRequest& getRequest() const;
         const SpaResponse& getResponse() const;
     };
 
     typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
-    typedef LibWheel::Trie<boost::uint8_t, SpaRequest> RequestTable;
+    typedef LibWheel::Trie<uint8_t, SpaRequest> RequestTable;
 
     const SpaConfig& config;
     HostTable hostTable;
@@ -117,11 +117,11 @@ class SpaListener : public Listener
     ~SpaListener();
 };
 
-SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, boost::uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, boost::uint32_t override_server_addr) THROW((CryptoException))
+SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException))
 : HostRecordBase(pkt, target), request(req), response()
 {
     size_t resp_len;
-    LibWheel::auto_array<boost::uint8_t> resp(Listener::generateResponse(*this, challenge, clen, req.getIgnoreClientAddr(), override_server_addr, req.getRequestString(), resp_len));
+    std::unique_ptr<uint8_t[]> resp(Listener::generateResponse(*this, challenge, clen, req.getIgnoreClientAddr(), override_server_addr, req.getRequestString(), resp_len));
     Listener::computeMAC(response, req.getSecret(), resp.get(), resp_len);
 }
 
@@ -190,7 +190,7 @@ bool
 SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
 {
     size_t payload_size;
-    const boost::uint8_t* contents = pkt->getUdpPayload(payload_size);
+    const uint8_t* contents = pkt->getUdpPayload(payload_size);
 
     // make sure that we have a valid message
     if (payload_size != BITS_TO_BYTES(MAC_BITS))
@@ -225,9 +225,9 @@ SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestExcepti
     assert(pkt != NULL);
     size_t payload_size;
     const SpaRequestHeader* hdr = reinterpret_cast<const SpaRequestHeader*>(pkt->getUdpPayload(payload_size));
-    const boost::uint8_t* contents = pkt->getUdpPayload(payload_size) + sizeof(SpaRequestHeader);
+    const uint8_t* contents = pkt->getUdpPayload(payload_size) + sizeof(SpaRequestHeader);
     const SpaRequest* request;
-    boost::uint16_t request_bytes = ntohs(hdr->requestBytes);
+    uint16_t request_bytes = ntohs(hdr->requestBytes);
 
     // make sure we have a valid message
     if (payload_size < sizeof(SpaRequestHeader))
@@ -262,11 +262,11 @@ Throws: SocketException - error sending challenge message
 void 
 SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException))
 {
-    //LibWheel::auto_array<boost::uint8_t> challenge;
+    //std::unique_ptr<uint8_t[]> challenge;
     size_t challenge_len;
-    boost::uint16_t dport;
+    uint16_t dport;
     
-    LibWheel::auto_array<boost::uint8_t> challenge(generateChallenge(config, req, challenge_len, req.getProtocol(), dport));
+    std::unique_ptr<uint8_t[]> challenge(generateChallenge(config, req, challenge_len, req.getProtocol(), dport));
     sendMessage(pkt->getIpSource(), pkt->getUdpSource(), pkt->getUdpDest(), challenge.get(), challenge_len);
 
     // create a record for this host
@@ -343,7 +343,7 @@ Constructor for SpaListener
 Initialize, program the request matcher trie with all request strings
 */
 SpaListener::SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException))
-: Listener(c, "/proc/"REMAP_PROC_FILE, verbose_logging), config(c), hostTable(), requestTable(), hostTableGC(hostTable, verbose_logging)
+: Listener(c, "/proc/" REMAP_PROC_FILE, verbose_logging), config(c), hostTable(), requestTable(), hostTableGC(hostTable, verbose_logging)
 {
     // program the requests trie with all request strings
     const std::vector<SpaRequest>& requests = c.getRequests();
@@ -385,7 +385,7 @@ Print a help message
 */
 void print_help()
 {
-    std::cout << "Usage: "QUOTE(PROGNAME)" [-c <config file>] [-s|-p] [-D] [-V] [-h] [-v]\n"
+    std::cout << "Usage: " QUOTE(PROGNAME) " [-c <config file>] [-s|-p] [-D] [-V] [-h] [-v]\n"
               << "where -c <config file> - use the specified configuration file\n"
               << "      -s - use single packet authorization (default)\n"
               << "      -p - use port knocking\n"
@@ -399,7 +399,7 @@ void print_help()
 
 void parse_args(int argc, char** argv, std::string& config_file, Mode& mode, bool& daemon, bool& verbose)
 {
-    char* short_options = "c:spDhvV";
+    const char* short_options = "c:spDhvV";
     static struct option long_options[] = {
         {"config", 1, 0, 'c'},
         {"spa", 0, 0, 's'},
