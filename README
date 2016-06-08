@@ -1,0 +1,14 @@
+rknock
+======
+
+This project is a challenge-response port knocking and SPA system that I wrote 
+for my MSc in 2007.  It worked at the time.  It should compile under a modern 
+compiler as of 2016, but it has not been tested and may not work.  I'm not sure 
+that I remember how to use it.  It has various issues that need to be addressed 
+before anyone should try to use it.
+
+The design of this program is described in http://ciphertext.info/papers/thesis-degraaf.pdf 
+
+Unless otherwise noted, all code here is currently not licenced for any re-use 
+or distribution.  It is being made available for educational purposes only.
+
