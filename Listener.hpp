@@ -65,8 +65,8 @@
                 uint16_t dport;
                 uint16_t targetPort;
               public:
-                HostRecordBase(const NFQ::NfqUdpPacket* pkt);
-                HostRecordBase(const NFQ::NfqUdpPacket* pkt, uint16_t target);
+                HostRecordBase(NFQ::NfqUdpPacket::const_ptr pkt);
+                HostRecordBase(NFQ::NfqUdpPacket::const_ptr pkt, uint16_t target);
                 virtual ~HostRecordBase();
                 uint32_t getSrcAddr() const;
                 uint16_t getSrcPort() const;
@@ -77,7 +77,7 @@
             };
 
             Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
-            virtual void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException)) = 0;
+            virtual void handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException)) = 0;
             std::unique_ptr<uint8_t[]> generateChallenge(const Config& config, const RequestBase&, size_t& len, const Protocol& proto, uint16_t& dport) THROW((SocketException, IOException, CryptoException));
             void openPort(const HostRecordBase& host, const RequestBase& req) THROW((IOException));
             NFQ::NfqSocket sock;
@@ -90,7 +90,7 @@
             static uint16_t getPort(uint16_t hint, const Protocol& proto) THROW((SocketException));
             static std::unique_ptr<uint8_t[]> generateResponse(const HostRecordBase& rec, const uint8_t* challenge, size_t clen, bool ignore_client_addr, uint32_t override_server_addr, const std::vector<uint8_t>& request, std::size_t& resp_len);
             static void sendMessage(in_addr_t daddr, in_port_t dport, in_port_t sport, const uint8_t* mess, size_t len) THROW((SocketException, IOException));
-            static void printPacketInfo(const NFQ::NfqPacket* pkt, std::ostream& out);
+            static void printPacketInfo(NFQ::NfqPacket::const_ptr pkt, std::ostream& out);
             static void getHash(uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const std::string& str);
             static void getHash(uint8_t buf[BITS_TO_BYTES(HASH_BITS)], const uint8_t* str, size_t strlen);
             static void encryptPort(uint8_t buf[BITS_TO_BYTES(CIPHER_BLOCK_BITS)], uint16_t port, const uint8_t pad[BITS_TO_BYTES(PORT_MESSAGE_PAD_BITS)], const std::string& keystr) THROW((CryptoException));

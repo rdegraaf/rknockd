@@ -28,7 +28,7 @@
                 uint32_t saddr;
                 uint32_t daddr;
                 uint16_t sport;
-                AddressPair(const NFQ::NfqUdpPacket* pkt);
+                AddressPair(NFQ::NfqUdpPacket::const_ptr pkt);
                 AddressPair(const Listener::HostRecordBase& host);
             };
 
@@ -49,20 +49,20 @@
                 enum State { CLOSED, REQUEST, CHALLENGE, RESPONSE, OPEN };
                 typedef std::tr1::unordered_map<const PKRequest*, KnockSequence> RequestList;
                 
-                HostRecord(const NFQ::NfqUdpPacket* pkt);
+                HostRecord(NFQ::NfqUdpPacket::const_ptr pkt);
                 State getState() const;
                 KnockSequence& getResponse();
                 const PKRequest& getRequest() const;
                 //const RequestList& getRequests() const;
-                void updateState(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests);
+                void updateState(NFQ::NfqUdpPacket::const_ptr pkt, const PKConfig::RequestList& crequests);
               private:
                 State state;
                 const PKRequest* request;
                 KnockSequence response;
                 RequestList requests;
                 
-                void updateRequest(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests);
-                void updateResponse(const NFQ::NfqUdpPacket* pkt);
+                void updateRequest(NFQ::NfqUdpPacket::const_ptr pkt, const PKConfig::RequestList& crequests);
+                void updateResponse(NFQ::NfqUdpPacket::const_ptr pkt);
             };
           
             typedef std::tr1::unordered_map<AddressPair, HostRecord, AddressPairHash, AddressPairEqual> HostTable;
@@ -73,11 +73,11 @@
             HostTableGC<HostTable> hostTableGC;
             PortSet portSet;
 
-            void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
-            HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt, bool in_request) THROW((BadRequestException));
-            //void deleteRecord(const NFQ::NfqUdpPacket* pkt);
+            void handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException));
+            HostRecord& getRecord(shared_ptr<const NFQ::NfqUdpPacket> pkt, bool in_request) THROW((BadRequestException));
+            //void deleteRecord(NFQ::NfqUdpPacket::const_ptr pkt);
             void deleteRecord(const HostRecord& rec);
-            void issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW((CryptoException, IOException, SocketException));
+            void issueChallenge(HostRecord& rec, NFQ::NfqUdpPacket::const_ptr pkt) THROW((CryptoException, IOException, SocketException));
             
           public:
             PKListener(const PKConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));

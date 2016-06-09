@@ -8,10 +8,16 @@
     #include <memory>
     #include <boost/utility.hpp>
     #include <boost/function.hpp>
+    #include <boost/enable_shared_from_this.hpp>
+    #include <boost/shared_ptr.hpp>
     #include <netinet/ip.h>
     #include <netinet/tcp.h>
     #include <netinet/udp.h>
     #include "common.h"
+
+    // Maybe std will have a shared_ptr for arrays in C++1z?
+    using boost::shared_ptr;
+    using boost::enable_shared_from_this;
 
     extern "C"
     {
@@ -51,7 +57,7 @@
             ~NfqSocket();
             void connect(QueueNum num) THROW((NfqException));
             void setCopyMode(CopyMode mode, int range=65535) THROW((NfqException));
-            std::unique_ptr<NfqPacket> recvPacket(bool noblock=false) THROW((NfqException));
+            shared_ptr<NfqPacket> recvPacket(bool noblock=false) THROW((NfqException));
             void waitForPacket() THROW((NfqException));
             void waitForPacket(int func_fd, boost::function<void()> func);
             void sendResponse(NfqPacket* pkt) THROW((NfqException));
@@ -62,7 +68,7 @@
             CopyMode copyMode;                  // the amount of packet data to copy from kernelspace
             struct nfq_handle* nfqHandle;       // handle to the libnetfilter_queue library
             struct nfq_q_handle* queueHandle;   // handle to a specific libnetfilter_queue queue
-            std::unique_ptr<NfqPacket> pkt;     // packet being received; used by recvPacket()
+            shared_ptr<NfqPacket> pkt;     // packet being received; used by recvPacket()
         };
 
         // Allowing copies of NfqPackets to be made would break the responseSent 
@@ -73,9 +79,10 @@
         // write an assignment operator that allows NfqPackets to be safely assigned
         // to NfqPacketBuffers.  The only way to create an NfqPacket should be 
         // from within NfqSocket::recvPacket().
-        class NfqPacket : public boost::noncopyable
+        class NfqPacket : public boost::noncopyable, public enable_shared_from_this<NfqPacket>
         {
           public:
+            typedef shared_ptr<const NfqPacket> const_ptr;
             enum class Verdict : u_int32_t{
                 ACCEPT = NF_ACCEPT,
                 DROP = NF_DROP,
@@ -92,7 +99,7 @@
             std::uint32_t getOutdev() const;
             std::uint32_t getPhysOutdev() const;
             const std::uint8_t (&getHwSource(std::uint16_t& addrlen) const)[8];
-            const std::uint8_t* getPacket(std::size_t& size) const;
+            shared_ptr<const std::uint8_t[]> getPacket(std::size_t& size) const;
             void setVerdict(Verdict v);
             void setNfMark(std::uint32_t mark);
           protected:
@@ -120,10 +127,11 @@
         class NfqIpPacket : public NfqPacket
         {
           public:
+            typedef shared_ptr<const NfqIpPacket> const_ptr;
             std::uint32_t getIpSource() const;
             std::uint32_t getIpDest() const;
-            const struct iphdr* getIpHeader(std::size_t& size) const;
-            const std::uint8_t* getIpPayload(std::size_t& size) const;
+            shared_ptr<const struct iphdr> getIpHeader(std::size_t& size) const;
+            shared_ptr<const std::uint8_t[]> getIpPayload(std::size_t& size) const;
             virtual ~NfqIpPacket() {}
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
@@ -135,10 +143,11 @@
         class NfqTcpPacket : public NfqIpPacket
         {
           public:
+            typedef shared_ptr<const NfqTcpPacket> const_ptr;
             std::uint16_t getTcpSource() const;
             std::uint16_t getTcpDest() const;
-            const struct tcphdr* getTcpHeader(std::size_t& size) const;
-            const std::uint8_t* getTcpPayload(std::size_t& size) const;
+            shared_ptr<const struct tcphdr> getTcpHeader(std::size_t& size) const;
+            shared_ptr<const std::uint8_t[]> getTcpPayload(std::size_t& size) const;
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
             NfqTcpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);
@@ -149,10 +158,11 @@
         class NfqUdpPacket : public NfqIpPacket
         {
           public:
+            typedef shared_ptr<const NfqUdpPacket> const_ptr;
             std::uint16_t getUdpSource() const;
             std::uint16_t getUdpDest() const;
-            const struct udphdr* getUdpHeader(std::size_t& size) const;
-            const std::uint8_t* getUdpPayload(std::size_t& size) const;
+            shared_ptr<const struct udphdr> getUdpHeader(std::size_t& size) const;
+            shared_ptr<const std::uint8_t[]> getUdpPayload(std::size_t& size) const;
           protected:
             friend int NfqPacket::createPacket(struct nfq_q_handle*, struct nfgenmsg*, struct nfq_data*, void*);
             NfqUdpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_t psize);

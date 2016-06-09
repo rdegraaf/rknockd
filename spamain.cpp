@@ -39,6 +39,7 @@ then these will need to be converted to synchronous signal handlers.
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <getopt.h>
+#include <boost/pointer_cast.hpp>
 #include <linux/netfilter_ipv4/ipt_REMAP.h>
 #include "Config.hpp"
 #include "NFQ.hpp"
@@ -71,7 +72,7 @@ class SpaListener : public Listener
         uint32_t daddr;
         uint16_t sport;
         uint16_t dport;
-        AddressPair(const NFQ::NfqUdpPacket* pkt);
+        AddressPair(NFQ::NfqUdpPacket::const_ptr pkt);
         AddressPair(const Listener::HostRecordBase& host);
     };
 
@@ -92,7 +93,7 @@ class SpaListener : public Listener
         const SpaRequest& request;
         SpaResponse response;
       public:
-        HostRecord(const NFQ::NfqUdpPacket* pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException));
+        HostRecord(NFQ::NfqUdpPacket::const_ptr pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException));
         const SpaRequest& getRequest() const;
         const SpaResponse& getResponse() const;
     };
@@ -105,19 +106,19 @@ class SpaListener : public Listener
     RequestTable requestTable;
     HostTableGC<HostTable> hostTableGC;
 
-    HostRecord& getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException));
-    bool checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host);
+    HostRecord& getRecord(NFQ::NfqUdpPacket::const_ptr pkt) THROW((UnknownHostException));
+    bool checkResponse(NFQ::NfqUdpPacket::const_ptr pkt, const HostRecord& host);
     void deleteState(const HostRecord& host);
-    const SpaRequest& checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException));
-    void issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
-    void handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException));
+    const SpaRequest& checkRequest(NFQ::NfqUdpPacket::const_ptr pkt) THROW((BadRequestException));
+    void issueChallenge(NFQ::NfqUdpPacket::const_ptr pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException));
+    void handlePacket(NFQ::NfqPacket::const_ptr p) THROW((CryptoException));
 
   public:
     SpaListener(const SpaConfig& c, bool verbose_logging) THROW((IOException, NFQ::NfqException));
     ~SpaListener();
 };
 
-SpaListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException))
+SpaListener::HostRecord::HostRecord(NFQ::NfqUdpPacket::const_ptr pkt, uint16_t target, const SpaRequest& req, const uint8_t* challenge, size_t clen, uint32_t override_server_addr) THROW((CryptoException))
 : HostRecordBase(pkt, target), request(req), response()
 {
     size_t resp_len;
@@ -140,7 +141,7 @@ SpaListener::HostRecord::getResponse() const
 /*
 Creates an AddressPair from a NfqUdpPacket 
 */
-SpaListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
+SpaListener::AddressPair::AddressPair(NFQ::NfqUdpPacket::const_ptr pkt)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest())
 {}
 
@@ -172,7 +173,7 @@ If an entry exists in the hash table matching *pkt, return it.  Otherwise,
 throw an UnknownHostException.
 */
 SpaListener::HostRecord& 
-SpaListener::getRecord(const NFQ::NfqUdpPacket* pkt) THROW((UnknownHostException))
+SpaListener::getRecord(NFQ::NfqUdpPacket::const_ptr pkt) THROW((UnknownHostException))
 {
     HostTable::iterator iter = hostTable.find(AddressPair(pkt));
     if (iter == hostTable.end())
@@ -187,17 +188,17 @@ If the response in *pkt is the one expected for host, return true.  Otherwise,
 return false.
 */
 bool 
-SpaListener::checkResponse(const NFQ::NfqUdpPacket* pkt, const HostRecord& host)
+SpaListener::checkResponse(NFQ::NfqUdpPacket::const_ptr pkt, const HostRecord& host)
 {
     size_t payload_size;
-    const uint8_t* contents = pkt->getUdpPayload(payload_size);
+    shared_ptr<const uint8_t[]> contents = pkt->getUdpPayload(payload_size);
 
     // make sure that we have a valid message
     if (payload_size != BITS_TO_BYTES(MAC_BITS))
         return false;
 
     // check if we received the expected response
-    if (std::equal(host.getResponse().begin(), host.getResponse().end(), contents))
+    if (std::equal(host.getResponse().begin(), host.getResponse().end(), contents.get()))
         return true;
     else
         return false;
@@ -220,12 +221,13 @@ If *pkt contains a valid request message, return a reference to the
 corresponding SpaRequest object.  Otherwise, throw a BadRequestException.
 */
 const SpaRequest& 
-SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestException))
+SpaListener::checkRequest(NFQ::NfqUdpPacket::const_ptr pkt) THROW((BadRequestException))
 {
     assert(pkt != NULL);
     size_t payload_size;
-    const SpaRequestHeader* hdr = reinterpret_cast<const SpaRequestHeader*>(pkt->getUdpPayload(payload_size));
-    const uint8_t* contents = pkt->getUdpPayload(payload_size) + sizeof(SpaRequestHeader);
+    shared_ptr<const uint8_t[]> payload = pkt->getUdpPayload(payload_size);
+    shared_ptr<const SpaRequestHeader> hdr = boost::reinterpret_pointer_cast<const SpaRequestHeader>(payload);
+    shared_ptr<const uint8_t[]> contents = { payload, payload.get() + sizeof(SpaRequestHeader) };
     const SpaRequest* request;
     uint16_t request_bytes = ntohs(hdr->requestBytes);
 
@@ -240,7 +242,7 @@ SpaListener::checkRequest(const NFQ::NfqUdpPacket* pkt) THROW((BadRequestExcepti
         throw BadRequestException("Message truncated");
 
     // look up the request
-    request = requestTable.search(contents, request_bytes);
+    request = requestTable.search(contents.get(), request_bytes);
     if (request == NULL)
         throw BadRequestException("Unrecognized request");
     else
@@ -260,7 +262,7 @@ Throws: SocketException - error sending challenge message
         IOException - error reading random data
 */
 void 
-SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException))
+SpaListener::issueChallenge(NFQ::NfqUdpPacket::const_ptr pkt, const SpaRequest& req) THROW((CryptoException, IOException, SocketException))
 {
     //std::unique_ptr<uint8_t[]> challenge;
     size_t challenge_len;
@@ -284,9 +286,9 @@ SpaListener::issueChallenge(const NFQ::NfqUdpPacket* pkt, const SpaRequest& req)
 Handle a packet received from Netlink
 */
 void 
-SpaListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
+SpaListener::handlePacket(NFQ::NfqPacket::const_ptr p) THROW((CryptoException))
 {
-    const NFQ::NfqUdpPacket* packet = dynamic_cast<const NFQ::NfqUdpPacket*>(p);
+    NFQ::NfqUdpPacket::const_ptr packet = boost::dynamic_pointer_cast<const NFQ::NfqUdpPacket>(p);
     assert(packet != NULL);
 
     try

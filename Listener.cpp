@@ -114,7 +114,7 @@ Listener::operator() ()
             try
             {
                 sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
-                std::unique_ptr<NFQ::NfqPacket> packet = sock.recvPacket(true);
+                shared_ptr<NFQ::NfqPacket> packet = sock.recvPacket(true);
 
                 // set the verdict first, so that we don't keep the kernel waiting
                 packet->setVerdict(NFQ::NfqPacket::Verdict::DROP);
@@ -123,7 +123,7 @@ Listener::operator() ()
                 printPacketInfo(packet, std::cout);
 #endif*/
                 // handle the packet
-                handlePacket(packet.get());
+                handlePacket(packet);
             }
             catch (const NFQ::NfqException& e)
             {
@@ -158,11 +158,11 @@ Listener::close() THROW((NFQ::NfqException, IOException))
 
 
 void 
-Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out)
+Listener::printPacketInfo(NFQ::NfqPacket::const_ptr packet, std::ostream& out)
 {
-    const NFQ::NfqTcpPacket* tcp_packet = dynamic_cast<const NFQ::NfqTcpPacket*>(packet);
-    const NFQ::NfqUdpPacket* udp_packet = dynamic_cast<const NFQ::NfqUdpPacket*>(packet);
-    const NFQ::NfqIpPacket* ip_packet = dynamic_cast<const NFQ::NfqIpPacket*>(packet);
+    NFQ::NfqTcpPacket::const_ptr tcp_packet = boost::dynamic_pointer_cast<const NFQ::NfqTcpPacket>(packet);
+    NFQ::NfqUdpPacket::const_ptr udp_packet = boost::dynamic_pointer_cast<const NFQ::NfqUdpPacket>(packet);
+    NFQ::NfqIpPacket::const_ptr ip_packet = boost::dynamic_pointer_cast<const NFQ::NfqIpPacket>(packet);
 
     if (udp_packet)
     {
@@ -214,12 +214,12 @@ Listener::printPacketInfo(const NFQ::NfqPacket* packet, std::ostream& out)
     out << std::dec;*/
 }
 
-Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt)
+Listener::HostRecordBase::HostRecordBase(NFQ::NfqUdpPacket::const_ptr pkt)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort()
 {}
 
 
-Listener::HostRecordBase::HostRecordBase(const NFQ::NfqUdpPacket* pkt, uint16_t target)
+Listener::HostRecordBase::HostRecordBase(NFQ::NfqUdpPacket::const_ptr pkt, uint16_t target)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource()), dport(pkt->getUdpDest()), targetPort(target)
 {}
 

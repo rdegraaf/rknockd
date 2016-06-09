@@ -17,7 +17,7 @@ namespace Rknockd
 /*
 Creates an AddressPair from a NfqUdpPacket 
 */
-PKListener::AddressPair::AddressPair(const NFQ::NfqUdpPacket* pkt)
+PKListener::AddressPair::AddressPair(NFQ::NfqUdpPacket::const_ptr pkt)
 : saddr(pkt->getIpSource()), daddr(pkt->getIpDest()), sport(pkt->getUdpSource())
 {}
 
@@ -43,7 +43,7 @@ PKListener::AddressPairEqual::operator() (const AddressPair& a, const AddressPai
 }
 
 
-PKListener::HostRecord::HostRecord(const NFQ::NfqUdpPacket* pkt)
+PKListener::HostRecord::HostRecord(NFQ::NfqUdpPacket::const_ptr pkt)
 : HostRecordBase(pkt), state(CLOSED), request(), response(), requests()
 {}
 
@@ -70,7 +70,7 @@ PKListener::HostRecord::getRequest() const
 
 
 void
-PKListener::HostRecord::updateState(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests)
+PKListener::HostRecord::updateState(NFQ::NfqUdpPacket::const_ptr pkt, const PKConfig::RequestList& crequests)
 {
     switch (state)
     {
@@ -88,7 +88,7 @@ PKListener::HostRecord::updateState(const NFQ::NfqUdpPacket* pkt, const PKConfig
 }
 
 void
-PKListener::HostRecord::updateRequest(const NFQ::NfqUdpPacket* pkt, const PKConfig::RequestList& crequests)
+PKListener::HostRecord::updateRequest(NFQ::NfqUdpPacket::const_ptr pkt, const PKConfig::RequestList& crequests)
 {
     // update the list of currently matched requests
     for (RequestList::iterator i=requests.begin(); i!=requests.end(); )
@@ -137,7 +137,7 @@ PKListener::HostRecord::updateRequest(const NFQ::NfqUdpPacket* pkt, const PKConf
 
 
 void
-PKListener::HostRecord::updateResponse(const NFQ::NfqUdpPacket* pkt)
+PKListener::HostRecord::updateResponse(NFQ::NfqUdpPacket::const_ptr pkt)
 {
     KnockSequence::iterator i = response.find(pkt->getUdpDest());
     if (i != response.end())
@@ -177,12 +177,11 @@ PKListener::~PKListener()
 }
 
 void
-PKListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
+PKListener::handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException))
 {
     bool in_request = false;
-    const NFQ::NfqUdpPacket* packet = dynamic_cast<const NFQ::NfqUdpPacket*>(p);
+    shared_ptr<const NFQ::NfqUdpPacket> packet = boost::dynamic_pointer_cast<const NFQ::NfqUdpPacket>(p);
     assert(packet != NULL);
-    
 
     // check if this port number is used in a request
     if (portSet.find(packet->getUdpDest()) != portSet.end())
@@ -229,7 +228,7 @@ PKListener::handlePacket(const NFQ::NfqPacket* p) THROW((CryptoException))
 }
 
 PKListener::HostRecord& 
-PKListener::getRecord(const NFQ::NfqUdpPacket* pkt, bool in_request) THROW((BadRequestException))
+PKListener::getRecord(shared_ptr<const NFQ::NfqUdpPacket> pkt, bool in_request) THROW((BadRequestException))
 {
     HostTable::iterator iter = hostTable.find(AddressPair(pkt));
     if (iter == hostTable.end())
@@ -280,7 +279,7 @@ getBytes(const InIt& begin, const InIt& end, const typename std::back_insert_ite
 
 
 void 
-PKListener::issueChallenge(HostRecord& rec, const NFQ::NfqUdpPacket* pkt) THROW((CryptoException, IOException, SocketException))
+PKListener::issueChallenge(HostRecord& rec, NFQ::NfqUdpPacket::const_ptr pkt) THROW((CryptoException, IOException, SocketException))
 {
     //std::unique_ptr<uint8_t[]> challenge;
     size_t challenge_len;

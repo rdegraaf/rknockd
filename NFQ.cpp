@@ -79,7 +79,7 @@ NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 }
 
 
-std::unique_ptr<NfqPacket>
+shared_ptr<NfqPacket>
 NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 {
     // NOTE: this may drop messages if more than one message is queued.
@@ -344,11 +344,11 @@ const std::uint8_t (&NfqPacket::getHwSource(std::uint16_t& addrlen) const)[8]
 // mode:    NONE    - a null pointer will be returned
 //          META    - only packet headers will be returned???
 //          PACKET  - the entire packet will be returned
-const std::uint8_t*
+shared_ptr<const std::uint8_t[]>
 NfqPacket::getPacket(std::size_t& size) const
 {
     size = packetLen;
-    return packet.get();
+    return { shared_from_this(), packet.get() };
 }
 
 
@@ -373,20 +373,20 @@ NfqIpPacket::NfqIpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::size_
     assert((nullptr != packet) && (0 != packetLen));
 }
 
-const struct iphdr* 
+shared_ptr<const struct iphdr>
 NfqIpPacket::getIpHeader(std::size_t& size) const
 {
     std::size_t offset = getIpHeaderOffset();
     size = getIpPayloadOffset() - offset;
-    return reinterpret_cast<struct iphdr*>(packet.get() + offset);
+    return { shared_from_this(), reinterpret_cast<struct iphdr*>(packet.get() + offset) };
 }
 
-const std::uint8_t* 
+shared_ptr<const std::uint8_t[]>
 NfqIpPacket::getIpPayload(std::size_t& size) const
 {
     std::size_t offset = getIpPayloadOffset();
     size = packetLen - offset;
-    return packet.get() + offset;
+    return { shared_from_this(), packet.get() + offset };
 }
 
 std::uint32_t
@@ -405,20 +405,20 @@ NfqTcpPacket::NfqTcpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::siz
 : NfqIpPacket(nfa, payload, psize)
 {}
 
-const struct tcphdr* 
+shared_ptr<const struct tcphdr>
 NfqTcpPacket::getTcpHeader(std::size_t& size) const
 {
     std::size_t offset = getTcpHeaderOffset();
     size = getTcpPayloadOffset() - offset;
-    return reinterpret_cast<struct tcphdr*>(packet.get() + offset);
+    return { shared_from_this(), reinterpret_cast<struct tcphdr*>(packet.get() + offset) };
 }
 
-const std::uint8_t* 
+shared_ptr<const std::uint8_t[]>
 NfqTcpPacket::getTcpPayload(std::size_t& size) const
 {
     std::size_t offset = getTcpPayloadOffset();
     size = packetLen - offset;
-    return packet.get() + offset;
+    return { shared_from_this(), packet.get() + offset };
 }
 
 std::uint16_t
@@ -437,20 +437,20 @@ NfqUdpPacket::NfqUdpPacket(struct nfq_data* nfa, std::uint8_t* payload, std::siz
 : NfqIpPacket(nfa, payload, psize)
 {}
 
-const struct udphdr* 
+shared_ptr<const struct udphdr>
 NfqUdpPacket::getUdpHeader(std::size_t& size) const
 {
     std::size_t offset = getUdpHeaderOffset();
     size = getUdpPayloadOffset() - offset;
-    return reinterpret_cast<struct udphdr*>(packet.get() + offset);
+    return { shared_from_this(), reinterpret_cast<struct udphdr*>(packet.get() + offset) };
 }
 
-const std::uint8_t* 
+shared_ptr<const std::uint8_t[]>
 NfqUdpPacket::getUdpPayload(std::size_t& size) const
 {
     std::size_t offset = getUdpPayloadOffset();
     size = packetLen - offset;
-    return packet.get() + offset;
+    return { shared_from_this(), packet.get() + offset };
 }
 
 std::uint16_t
