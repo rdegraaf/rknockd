@@ -77,7 +77,7 @@
             };
 
             Listener(const Config& cfg, const std::string& remap, bool verbose) THROW((IOException, NFQ::NfqException));
-            virtual void handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException)) = 0;
+            virtual void handlePacket(NFQ::NfqPacket::const_ptr p) THROW((CryptoException)) = 0;
             std::unique_ptr<uint8_t[]> generateChallenge(const Config& config, const RequestBase&, size_t& len, const Protocol& proto, uint16_t& dport) THROW((SocketException, IOException, CryptoException));
             void openPort(const HostRecordBase& host, const RequestBase& req) THROW((IOException));
             NFQ::NfqSocket sock;

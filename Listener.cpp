@@ -114,11 +114,11 @@ Listener::operator() ()
             try
             {
                 sock.waitForPacket(LibWheel::SignalQueue::getReadFD(), LibWheel::SignalQueue::handleNext);
-                shared_ptr<NFQ::NfqPacket> packet = sock.recvPacket(true);
+                NFQ::NfqPacket::ptr packet = sock.recvPacket(true);
 
                 // set the verdict first, so that we don't keep the kernel waiting
                 packet->setVerdict(NFQ::NfqPacket::Verdict::DROP);
-                sock.sendResponse(packet.get());
+                sock.sendResponse(packet);
 /*#ifdef DEBUG
                 printPacketInfo(packet, std::cout);
 #endif*/

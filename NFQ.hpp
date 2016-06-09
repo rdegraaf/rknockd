@@ -60,7 +60,7 @@
             shared_ptr<NfqPacket> recvPacket(bool noblock=false) THROW((NfqException));
             void waitForPacket() THROW((NfqException));
             void waitForPacket(int func_fd, boost::function<void()> func);
-            void sendResponse(NfqPacket* pkt) THROW((NfqException));
+            void sendResponse(shared_ptr<NfqPacket> pkt) THROW((NfqException));
             void close() THROW((NfqException));
           private:
             bool isConnected;                   // true on sockets that are connected; false otherwise
@@ -82,6 +82,7 @@
         class NfqPacket : public boost::noncopyable, public enable_shared_from_this<NfqPacket>
         {
           public:
+            typedef shared_ptr<NfqPacket> ptr;
             typedef shared_ptr<const NfqPacket> const_ptr;
             enum class Verdict : u_int32_t{
                 ACCEPT = NF_ACCEPT,
@@ -109,7 +110,7 @@
             std::size_t packetLen;
           private:
             friend void NfqSocket::connect(NfqSocket::QueueNum); // allow connect to access createPacket
-            friend void NfqSocket::sendResponse(NfqPacket*); // allow sendResponse to access responseSent
+            friend void NfqSocket::sendResponse(NfqPacket::ptr); // allow sendResponse to access responseSent
             struct nfqnl_msg_packet_hdr nfInfo; // 
             std::uint32_t nfMark;
             struct timeval timestamp;
@@ -127,6 +128,7 @@
         class NfqIpPacket : public NfqPacket
         {
           public:
+            typedef shared_ptr<NfqIpPacket> ptr;
             typedef shared_ptr<const NfqIpPacket> const_ptr;
             std::uint32_t getIpSource() const;
             std::uint32_t getIpDest() const;
@@ -143,6 +145,7 @@
         class NfqTcpPacket : public NfqIpPacket
         {
           public:
+            typedef shared_ptr<NfqTcpPacket> ptr;
             typedef shared_ptr<const NfqTcpPacket> const_ptr;
             std::uint16_t getTcpSource() const;
             std::uint16_t getTcpDest() const;
@@ -158,6 +161,7 @@
         class NfqUdpPacket : public NfqIpPacket
         {
           public:
+            typedef shared_ptr<NfqIpPacket> ptr;
             typedef shared_ptr<const NfqUdpPacket> const_ptr;
             std::uint16_t getUdpSource() const;
             std::uint16_t getUdpDest() const;

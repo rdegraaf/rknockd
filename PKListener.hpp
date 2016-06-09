@@ -73,8 +73,8 @@
             HostTableGC<HostTable> hostTableGC;
             PortSet portSet;
 
-            void handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException));
-            HostRecord& getRecord(shared_ptr<const NFQ::NfqUdpPacket> pkt, bool in_request) THROW((BadRequestException));
+            void handlePacket(NFQ::NfqPacket::const_ptr p) THROW((CryptoException));
+            HostRecord& getRecord(NFQ::NfqUdpPacket::const_ptr pkt, bool in_request) THROW((BadRequestException));
             //void deleteRecord(NFQ::NfqUdpPacket::const_ptr pkt);
             void deleteRecord(const HostRecord& rec);
             void issueChallenge(HostRecord& rec, NFQ::NfqUdpPacket::const_ptr pkt) THROW((CryptoException, IOException, SocketException));

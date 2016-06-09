@@ -177,10 +177,10 @@ PKListener::~PKListener()
 }
 
 void
-PKListener::handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoException))
+PKListener::handlePacket(NFQ::NfqPacket::const_ptr p) THROW((CryptoException))
 {
     bool in_request = false;
-    shared_ptr<const NFQ::NfqUdpPacket> packet = boost::dynamic_pointer_cast<const NFQ::NfqUdpPacket>(p);
+    NFQ::NfqUdpPacket::const_ptr packet = boost::dynamic_pointer_cast<const NFQ::NfqUdpPacket>(p);
     assert(packet != NULL);
 
     // check if this port number is used in a request
@@ -228,7 +228,7 @@ PKListener::handlePacket(shared_ptr<const NFQ::NfqPacket> p) THROW((CryptoExcept
 }
 
 PKListener::HostRecord& 
-PKListener::getRecord(shared_ptr<const NFQ::NfqUdpPacket> pkt, bool in_request) THROW((BadRequestException))
+PKListener::getRecord(NFQ::NfqUdpPacket::const_ptr pkt, bool in_request) THROW((BadRequestException))
 {
     HostTable::iterator iter = hostTable.find(AddressPair(pkt));
     if (iter == hostTable.end())

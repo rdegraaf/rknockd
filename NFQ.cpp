@@ -79,7 +79,7 @@ NfqSocket::setCopyMode(CopyMode mode, int range) THROW((NfqException))
 }
 
 
-shared_ptr<NfqPacket>
+NfqPacket::ptr
 NfqSocket::recvPacket(bool noblock) THROW((NfqException))
 {
     // NOTE: this may drop messages if more than one message is queued.
@@ -158,7 +158,7 @@ NfqSocket::waitForPacket(int func_fd, boost::function<void()> func)
 
 
 void
-NfqSocket::sendResponse(NfqPacket* pkt) THROW((NfqException))
+NfqSocket::sendResponse(NfqPacket::ptr pkt) THROW((NfqException))
 {
     // make sure that a response hasn't already been sent
     if (pkt->responseSent == false) {
